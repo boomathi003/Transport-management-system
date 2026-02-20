@@ -20,6 +20,7 @@ const App: React.FC = () => {
   const [authError, setAuthError] = useState<string | null>(null);
 
   const signInSilently = async () => {
+    setAuthError(null);
     try {
       await setPersistence(auth, browserLocalPersistence);
       await signInAnonymously(auth);
@@ -32,6 +33,13 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      setAuthReady(true);
+      if (!auth.currentUser) {
+        setAuthError('Connection timed out. Please retry.');
+      }
+    }, 10000);
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         await signInSilently();
@@ -47,9 +55,18 @@ const App: React.FC = () => {
       }
 
       setAuthReady(true);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -106,6 +123,13 @@ const App: React.FC = () => {
           {authError && (
             <p className="mt-3 text-sm text-rose-600">{authError}</p>
           )}
+          <button
+            type="button"
+            onClick={signInSilently}
+            className="mt-5 w-full rounded-lg bg-indigo-600 px-4 py-2 text-white font-semibold hover:bg-indigo-700"
+          >
+            Retry Connection
+          </button>
         </div>
       </div>
     );

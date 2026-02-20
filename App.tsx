@@ -27,6 +27,7 @@ const App: React.FC = () => {
       setAuthError('Failed to initialize anonymous session. Enable Anonymous provider in Firebase Auth.');
       // eslint-disable-next-line no-console
       console.error('Anonymous sign-in error', error);
+      setAuthReady(true);
     }
   };
 

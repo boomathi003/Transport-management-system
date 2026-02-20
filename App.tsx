@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { browserLocalPersistence, onAuthStateChanged, setPersistence, signInAnonymously } from 'firebase/auth';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import StudentView from './components/StudentView';
@@ -21,6 +21,7 @@ const App: React.FC = () => {
 
   const signInSilently = async () => {
     try {
+      await setPersistence(auth, browserLocalPersistence);
       await signInAnonymously(auth);
     } catch (error) {
       setAuthError('Failed to initialize anonymous session. Enable Anonymous provider in Firebase Auth.');

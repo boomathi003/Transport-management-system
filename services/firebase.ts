@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAnalytics, isSupported, type Analytics } from 'firebase/analytics';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth } from 'firebase/auth';
 import { getDatabase } from 'firebase/database';
 
 const firebaseConfig = {
@@ -17,10 +17,7 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const rtdb = getDatabase(app);
 export const auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
 export let analytics: Analytics | null = null;
-
-googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 if (typeof window !== 'undefined') {
   void isSupported().then((supported) => {

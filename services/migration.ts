@@ -12,7 +12,7 @@ import {
   Student,
   VehicleRecord
 } from '../types';
-import { rtdb } from './firebase';
+import { auth, rtdb } from './firebase';
 const PLACEHOLDER_KEY = '__placeholder';
 
 const STORAGE_KEYS = {
@@ -24,6 +24,12 @@ const STORAGE_KEYS = {
   DESTINATIONS: 'ctms_destinations',
   MIGRATED: 'ctms_firestore_migrated'
 } as const;
+const getCurrentUserId = () => auth.currentUser?.uid ?? null;
+const userRootPath = (uid: string) => `users/${uid}`;
+const userCollectionPath = (uid: string, collection: string) => `${userRootPath(uid)}/${collection}`;
+const getMigrationKey = (uid: string) => `${STORAGE_KEYS.MIGRATED}_${uid}`;
+const getRootMigrationKey = (uid: string) => `${STORAGE_KEYS.MIGRATED}_root_${uid}`;
+const COLLECTIONS = ['students', 'attendance', 'fees', 'vehicles', 'attention', 'destinations'] as const;
 
 const readLocal = <T>(key: string): T[] => {
   try {
@@ -36,17 +42,62 @@ const readLocal = <T>(key: string): T[] => {
   }
 };
 
-const collectionHasDocs = async (name: string) => {
-  const snap = await get(child(ref(rtdb), name));
+const collectionHasDocs = async (uid: string, name: string) => {
+  const snap = await get(child(ref(rtdb), userCollectionPath(uid, name)));
   if (!snap.exists()) return false;
 
   const value = snap.val() as Record<string, unknown>;
   return Object.keys(value).some((key) => key !== PLACEHOLDER_KEY);
 };
 
+const userHasAnyData = async (uid: string) => {
+  const checks = await Promise.all(COLLECTIONS.map((name) => collectionHasDocs(uid, name)));
+  return checks.some(Boolean);
+};
+
+const migrateRootDataToUser = async (uid: string) => {
+  const updates: Record<string, unknown> = {};
+
+  const rootSnapshots = await Promise.all(
+    COLLECTIONS.map((name) => get(child(ref(rtdb), name)))
+  );
+
+  rootSnapshots.forEach((snapshot, index) => {
+    if (!snapshot.exists()) return;
+    const name = COLLECTIONS[index];
+    const data = snapshot.val() as Record<string, unknown>;
+    if (!data || typeof data !== 'object') return;
+
+    Object.entries(data).forEach(([id, value]) => {
+      updates[`${userCollectionPath(uid, name)}/${id}`] = value;
+    });
+  });
+
+  if (Object.keys(updates).length > 0) {
+    await update(ref(rtdb), updates);
+  }
+};
+
 export const runLocalStorageMigration = async () => {
   if (typeof window === 'undefined') return;
-  if (localStorage.getItem(STORAGE_KEYS.MIGRATED) === 'true') return;
+  const uid = getCurrentUserId();
+  if (!uid) return;
+  const migrationKey = getMigrationKey(uid);
+  const rootMigrationKey = getRootMigrationKey(uid);
+
+  if (localStorage.getItem(rootMigrationKey) !== 'true') {
+    const hasUserData = await userHasAnyData(uid);
+    if (!hasUserData) {
+      try {
+        await migrateRootDataToUser(uid);
+      } catch {
+        // Root migration may fail under strict rules; safe to continue.
+      }
+    }
+    localStorage.setItem(rootMigrationKey, 'true');
+  }
+
+  if (localStorage.getItem(migrationKey) === 'true') return;
 
   const [students, attendance, fees, vehicles, attention, destinations] = [
     readLocal<Student>(STORAGE_KEYS.STUDENTS),
@@ -61,11 +112,11 @@ export const runLocalStorageMigration = async () => {
 
   if (students.length > 0) {
     migrations.push((async () => {
-      if (await collectionHasDocs('students')) return;
+      if (await collectionHasDocs(uid, 'students')) return;
       const updates: Record<string, unknown> = {};
       students.forEach((student) => {
         const { id, ...rest } = student;
-        updates[`students/${id}`] = rest;
+        updates[`${userCollectionPath(uid, 'students')}/${id}`] = rest;
       });
       await update(ref(rtdb), updates);
     })());
@@ -73,11 +124,11 @@ export const runLocalStorageMigration = async () => {
 
   if (attendance.length > 0) {
     migrations.push((async () => {
-      if (await collectionHasDocs('attendance')) return;
+      if (await collectionHasDocs(uid, 'attendance')) return;
       const updates: Record<string, unknown> = {};
       attendance.forEach((record) => {
         const { id, ...rest } = record;
-        updates[`attendance/${id}`] = rest;
+        updates[`${userCollectionPath(uid, 'attendance')}/${id}`] = rest;
       });
       await update(ref(rtdb), updates);
     })());
@@ -85,11 +136,11 @@ export const runLocalStorageMigration = async () => {
 
   if (fees.length > 0) {
     migrations.push((async () => {
-      if (await collectionHasDocs('fees')) return;
+      if (await collectionHasDocs(uid, 'fees')) return;
       const updates: Record<string, unknown> = {};
       fees.forEach((fee) => {
         const { id, ...rest } = fee;
-        updates[`fees/${id}`] = rest;
+        updates[`${userCollectionPath(uid, 'fees')}/${id}`] = rest;
       });
       await update(ref(rtdb), updates);
     })());
@@ -97,11 +148,11 @@ export const runLocalStorageMigration = async () => {
 
   if (vehicles.length > 0) {
     migrations.push((async () => {
-      if (await collectionHasDocs('vehicles')) return;
+      if (await collectionHasDocs(uid, 'vehicles')) return;
       const updates: Record<string, unknown> = {};
       vehicles.forEach((vehicle) => {
         const { id, ...rest } = vehicle;
-        updates[`vehicles/${id}`] = rest;
+        updates[`${userCollectionPath(uid, 'vehicles')}/${id}`] = rest;
       });
       await update(ref(rtdb), updates);
     })());
@@ -109,11 +160,11 @@ export const runLocalStorageMigration = async () => {
 
   if (attention.length > 0) {
     migrations.push((async () => {
-      if (await collectionHasDocs('attention')) return;
+      if (await collectionHasDocs(uid, 'attention')) return;
       const updates: Record<string, unknown> = {};
       attention.forEach((message) => {
         const { id, ...rest } = message;
-        updates[`attention/${id}`] = rest;
+        updates[`${userCollectionPath(uid, 'attention')}/${id}`] = rest;
       });
       await update(ref(rtdb), updates);
     })());
@@ -121,20 +172,20 @@ export const runLocalStorageMigration = async () => {
 
   if (destinations.length > 0) {
     migrations.push((async () => {
-      if (await collectionHasDocs('destinations')) return;
+      if (await collectionHasDocs(uid, 'destinations')) return;
       const updates: Record<string, DestinationRecord> = {};
       destinations.forEach((destination) => {
-        updates[`destinations/${destination.studentId}`] = destination;
+        updates[`${userCollectionPath(uid, 'destinations')}/${destination.studentId}`] = destination;
       });
       await update(ref(rtdb), updates);
     })());
   }
 
   if (migrations.length === 0) {
-    localStorage.setItem(STORAGE_KEYS.MIGRATED, 'true');
+    localStorage.setItem(migrationKey, 'true');
     return;
   }
 
   await Promise.all(migrations);
-  localStorage.setItem(STORAGE_KEYS.MIGRATED, 'true');
+  localStorage.setItem(migrationKey, 'true');
 };

@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { FeesRecord, VehicleRecord, Student, AttendanceRecord } from '../types';
 import { TransportDataService } from '../services/dataService';
-import { Calendar, CreditCard, Truck, CheckSquare } from 'lucide-react';
+import { Calendar, CreditCard, Truck, CheckSquare, Download } from 'lucide-react';
 
 const DailyLogView: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -26,6 +26,55 @@ const DailyLogView: React.FC = () => {
     };
   }, [selectedDate]);
 
+  const downloadCsv = (filename: string, headers: string[], rows: string[][]) => {
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportFeesCsv = () => {
+    const rows = logData.fees.map((fee) => {
+      const student = students.find((s) => s.id === fee.studentId);
+      return [
+        fee.feeDate,
+        student?.name ?? 'Unknown',
+        student?.registrationNumber ?? '',
+        fee.feeType,
+        fee.totalAmount.toString(),
+        fee.paidAmount.toString(),
+        fee.status
+      ];
+    });
+    downloadCsv(`fees_${selectedDate}.csv`, ['Date', 'Student', 'Reg No', 'Type', 'Total', 'Paid', 'Status'], rows);
+  };
+
+  const exportAttendanceCsv = () => {
+    const rows = logData.attendance.map((record) => {
+      const student = students.find((s) => s.id === record.studentId);
+      return [record.date, student?.name ?? 'Unknown', student?.registrationNumber ?? '', record.status];
+    });
+    downloadCsv(`attendance_${selectedDate}.csv`, ['Date', 'Student', 'Reg No', 'Status'], rows);
+  };
+
+  const exportVehiclesCsv = () => {
+    const rows = logData.vehicles.map((vehicle) => [
+      vehicle.createdAt,
+      vehicle.busNumber,
+      vehicle.driverName,
+      vehicle.driverContact,
+      vehicle.stack ?? '',
+      vehicle.usage ?? ''
+    ]);
+    downloadCsv(`vehicles_${selectedDate}.csv`, ['Date', 'Bus Number', 'Driver', 'Contact', 'Route Stack', 'Usage'], rows);
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -42,6 +91,18 @@ const DailyLogView: React.FC = () => {
             onChange={(e) => setSelectedDate(e.target.value)}
           />
         </div>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <button onClick={exportFeesCsv} className="px-4 py-2 rounded-2xl bg-white border border-slate-200 text-xs font-black uppercase tracking-wider flex items-center gap-2">
+          <Download size={14} /> Fees CSV
+        </button>
+        <button onClick={exportAttendanceCsv} className="px-4 py-2 rounded-2xl bg-white border border-slate-200 text-xs font-black uppercase tracking-wider flex items-center gap-2">
+          <Download size={14} /> Attendance CSV
+        </button>
+        <button onClick={exportVehiclesCsv} className="px-4 py-2 rounded-2xl bg-white border border-slate-200 text-xs font-black uppercase tracking-wider flex items-center gap-2">
+          <Download size={14} /> Vehicles CSV
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">

@@ -16,7 +16,7 @@ import {
   AttentionMessage,
   DestinationRecord
 } from '../types';
-import { rtdb } from './firebase';
+import { auth, rtdb } from './firebase';
 
 const COLLECTIONS = {
   STUDENTS: 'students',
@@ -35,23 +35,113 @@ const DEFAULT_STUDENTS: Omit<Student, 'id' | 'createdAt'>[] = [
 ];
 
 const today = () => new Date().toISOString().split('T')[0];
+const getCurrentUserId = () => {
+  const uid = auth.currentUser?.uid;
+  if (!uid) {
+    throw new Error('User is not authenticated.');
+  }
+  return uid;
+};
+
+const userRootPath = () => `users/${getCurrentUserId()}`;
+const userCollectionPath = (collection: string) => `${userRootPath()}/${collection}`;
+const userDocumentPath = (collection: string, id: string) => `${userCollectionPath(collection)}/${id}`;
+const cacheKey = (collection: string) => `ctms_cache_${getCurrentUserId()}_${collection}`;
+const queueKey = () => `ctms_write_queue_${getCurrentUserId()}`;
+
+type QueueOperation =
+  | { type: 'set'; path: string; data: unknown }
+  | { type: 'update'; path: string; data: Record<string, unknown> }
+  | { type: 'remove'; path: string };
 
 const stripId = <T extends { id?: string }>(data: T) => {
   const { id, ...rest } = data;
   return rest;
 };
 
-const getCollectionMap = async <T>(path: string): Promise<Record<string, T>> => {
-  const snapshot = await get(child(ref(rtdb), path));
+const readCache = <T>(collection: string): T[] => {
+  try {
+    const raw = localStorage.getItem(cacheKey(collection));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeCache = <T>(collection: string, data: T[]) => {
+  try {
+    localStorage.setItem(cacheKey(collection), JSON.stringify(data));
+  } catch {
+    // Ignore quota/storage errors.
+  }
+};
+
+const readQueue = (): QueueOperation[] => {
+  try {
+    const raw = localStorage.getItem(queueKey());
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as QueueOperation[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeQueue = (ops: QueueOperation[]) => {
+  try {
+    localStorage.setItem(queueKey(), JSON.stringify(ops));
+  } catch {
+    // Ignore local storage failures.
+  }
+};
+
+const pushQueue = (op: QueueOperation) => {
+  writeQueue([...readQueue(), op]);
+};
+
+const queueAwareSet = async (path: string, data: unknown) => {
+  try {
+    await set(ref(rtdb, path), data);
+  } catch {
+    pushQueue({ type: 'set', path, data });
+  }
+};
+
+const queueAwareUpdate = async (path: string, data: Record<string, unknown>) => {
+  try {
+    await update(ref(rtdb, path), data);
+  } catch {
+    pushQueue({ type: 'update', path, data });
+  }
+};
+
+const queueAwareRemove = async (path: string) => {
+  try {
+    await remove(ref(rtdb, path));
+  } catch {
+    pushQueue({ type: 'remove', path });
+  }
+};
+
+const getCollectionMap = async <T>(collection: string): Promise<Record<string, T>> => {
+  const snapshot = await get(child(ref(rtdb), userCollectionPath(collection)));
   if (!snapshot.exists()) return {};
   return (snapshot.val() as Record<string, T>) ?? {};
 };
 
-const getCollectionArray = async <T>(path: string): Promise<Array<T & { id: string }>> => {
-  const data = await getCollectionMap<T>(path);
-  return Object.entries(data)
-    .filter(([id]) => id !== PLACEHOLDER_KEY)
-    .map(([id, value]) => ({ id, ...(value as T) }));
+const getCollectionArray = async <T>(collection: string): Promise<Array<T & { id: string }>> => {
+  try {
+    const data = await getCollectionMap<T>(collection);
+    const records = Object.entries(data)
+      .filter(([id]) => id !== PLACEHOLDER_KEY)
+      .map(([id, value]) => ({ id, ...(value as T) }));
+    writeCache(collection, records);
+    return records;
+  } catch {
+    return readCache<T & { id: string }>(collection);
+  }
 };
 
 const ensureCollectionsInitialized = async () => {
@@ -63,13 +153,13 @@ const ensureCollectionsInitialized = async () => {
   ];
 
   const snapshots = await Promise.all(
-    paths.map((path) => get(child(ref(rtdb), path)))
+    paths.map((path) => get(child(ref(rtdb), userCollectionPath(path))))
   );
 
   const updates: Record<string, boolean> = {};
   snapshots.forEach((snapshot, index) => {
     if (!snapshot.exists()) {
-      updates[`${paths[index]}/${PLACEHOLDER_KEY}`] = true;
+      updates[`${userCollectionPath(paths[index])}/${PLACEHOLDER_KEY}`] = true;
     }
   });
 
@@ -79,19 +169,49 @@ const ensureCollectionsInitialized = async () => {
 };
 
 export class TransportDataService {
+  static async flushOfflineQueue(): Promise<number> {
+    const queued = readQueue();
+    if (!queued.length) return 0;
+
+    const remaining: QueueOperation[] = [];
+    for (const op of queued) {
+      try {
+        if (op.type === 'set') {
+          await set(ref(rtdb, op.path), op.data);
+        } else if (op.type === 'update') {
+          await update(ref(rtdb, op.path), op.data);
+        } else {
+          await remove(ref(rtdb, op.path));
+        }
+      } catch {
+        remaining.push(op);
+      }
+    }
+    writeQueue(remaining);
+    return queued.length - remaining.length;
+  }
+
   // --- Students ---
   static async getStudents(): Promise<Student[]> {
-    await ensureCollectionsInitialized();
+    try {
+      await ensureCollectionsInitialized();
+    } catch {
+      // Ignore init failure (offline / temporary network issues).
+    }
     const students = await getCollectionArray<Omit<Student, 'id'>>(COLLECTIONS.STUDENTS);
 
     if (students.length === 0) {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return [];
+      }
+
       const updates: Record<string, unknown> = {};
 
       DEFAULT_STUDENTS.forEach((student) => {
-        const studentId = push(ref(rtdb, COLLECTIONS.STUDENTS)).key;
+        const studentId = push(ref(rtdb, userCollectionPath(COLLECTIONS.STUDENTS))).key;
         if (!studentId) return;
 
-        updates[`${COLLECTIONS.STUDENTS}/${studentId}`] = { ...student, createdAt: today() };
+        updates[`${userCollectionPath(COLLECTIONS.STUDENTS)}/${studentId}`] = { ...student, createdAt: today() };
         const destination: DestinationRecord = {
           studentId,
           pickupPoint: 'Pollachi',
@@ -99,11 +219,11 @@ export class TransportDataService {
           routeName: 'ROUTE-01',
           distance: 14
         };
-        updates[`${COLLECTIONS.DESTINATIONS}/${studentId}`] = destination;
+        updates[`${userCollectionPath(COLLECTIONS.DESTINATIONS)}/${studentId}`] = destination;
       });
 
       if (Object.keys(updates).length > 0) {
-        await update(ref(rtdb), updates);
+        await queueAwareUpdate('', updates);
       }
 
       return this.getStudents();
@@ -113,12 +233,13 @@ export class TransportDataService {
   }
 
   static async addStudent(data: Omit<Student, 'id' | 'createdAt'>): Promise<void> {
-    const studentRef = push(ref(rtdb, COLLECTIONS.STUDENTS));
-    await set(studentRef, { ...data, createdAt: today() });
+    const studentRef = push(ref(rtdb, userCollectionPath(COLLECTIONS.STUDENTS)));
+    if (!studentRef.key) return;
+    await queueAwareSet(`${userCollectionPath(COLLECTIONS.STUDENTS)}/${studentRef.key}`, { ...data, createdAt: today() });
   }
 
   static async updateStudent(id: string, updatesData: Partial<Student>): Promise<void> {
-    await update(ref(rtdb, `${COLLECTIONS.STUDENTS}/${id}`), stripId(updatesData));
+    await queueAwareUpdate(userDocumentPath(COLLECTIONS.STUDENTS, id), stripId(updatesData) as Record<string, unknown>);
   }
 
   static async deleteStudent(id: string): Promise<void> {
@@ -128,19 +249,19 @@ export class TransportDataService {
     ]);
 
     const updates: Record<string, null> = {
-      [`${COLLECTIONS.STUDENTS}/${id}`]: null,
-      [`${COLLECTIONS.DESTINATIONS}/${id}`]: null
+      [userDocumentPath(COLLECTIONS.STUDENTS, id)]: null,
+      [userDocumentPath(COLLECTIONS.DESTINATIONS, id)]: null
     };
 
     fees.filter((fee) => fee.studentId === id).forEach((fee) => {
-      updates[`${COLLECTIONS.FEES}/${fee.id}`] = null;
+      updates[userDocumentPath(COLLECTIONS.FEES, fee.id)] = null;
     });
 
     attendance.filter((record) => record.studentId === id).forEach((record) => {
-      updates[`${COLLECTIONS.ATTENDANCE}/${record.id}`] = null;
+      updates[userDocumentPath(COLLECTIONS.ATTENDANCE, record.id)] = null;
     });
 
-    await update(ref(rtdb), updates);
+    await queueAwareUpdate('', updates);
   }
 
   // --- Fees ---
@@ -149,16 +270,17 @@ export class TransportDataService {
   }
 
   static async addFee(data: Omit<FeesRecord, 'id' | 'createdAt'>): Promise<void> {
-    const feeRef = push(ref(rtdb, COLLECTIONS.FEES));
-    await set(feeRef, { ...data, createdAt: today() });
+    const feeRef = push(ref(rtdb, userCollectionPath(COLLECTIONS.FEES)));
+    if (!feeRef.key) return;
+    await queueAwareSet(`${userCollectionPath(COLLECTIONS.FEES)}/${feeRef.key}`, { ...data, createdAt: today() });
   }
 
   static async updateFee(id: string, updatesData: Partial<FeesRecord>): Promise<void> {
-    await update(ref(rtdb, `${COLLECTIONS.FEES}/${id}`), stripId(updatesData));
+    await queueAwareUpdate(userDocumentPath(COLLECTIONS.FEES, id), stripId(updatesData) as Record<string, unknown>);
   }
 
   static async deleteFee(id: string): Promise<void> {
-    await remove(ref(rtdb, `${COLLECTIONS.FEES}/${id}`));
+    await queueAwareRemove(userDocumentPath(COLLECTIONS.FEES, id));
   }
 
   // --- Attendance ---
@@ -171,12 +293,13 @@ export class TransportDataService {
     const existing = attendance.find((record) => record.studentId === studentId && record.date === date);
 
     if (existing) {
-      await update(ref(rtdb, `${COLLECTIONS.ATTENDANCE}/${existing.id}`), { status });
+      await queueAwareUpdate(userDocumentPath(COLLECTIONS.ATTENDANCE, existing.id), { status });
       return;
     }
 
-    const newRef = push(ref(rtdb, COLLECTIONS.ATTENDANCE));
-    await set(newRef, { studentId, date, status });
+    const newRef = push(ref(rtdb, userCollectionPath(COLLECTIONS.ATTENDANCE)));
+    if (!newRef.key) return;
+    await queueAwareSet(`${userCollectionPath(COLLECTIONS.ATTENDANCE)}/${newRef.key}`, { studentId, date, status });
   }
 
   static async saveAttendanceBatch(date: string, attendanceMap: Record<string, AttendanceStatus>): Promise<void> {
@@ -184,20 +307,20 @@ export class TransportDataService {
     const updates: Record<string, unknown> = {};
 
     existing.filter((record) => record.date === date).forEach((record) => {
-      updates[`${COLLECTIONS.ATTENDANCE}/${record.id}`] = null;
+      updates[userDocumentPath(COLLECTIONS.ATTENDANCE, record.id)] = null;
     });
 
     Object.entries(attendanceMap).forEach(([studentId, status]) => {
-      const attendanceId = push(ref(rtdb, COLLECTIONS.ATTENDANCE)).key;
+      const attendanceId = push(ref(rtdb, userCollectionPath(COLLECTIONS.ATTENDANCE))).key;
       if (!attendanceId) return;
-      updates[`${COLLECTIONS.ATTENDANCE}/${attendanceId}`] = { studentId, date, status };
+      updates[userDocumentPath(COLLECTIONS.ATTENDANCE, attendanceId)] = { studentId, date, status };
     });
 
-    await update(ref(rtdb), updates);
+    await queueAwareUpdate('', updates);
   }
 
   static async deleteAttendance(id: string): Promise<void> {
-    await remove(ref(rtdb, `${COLLECTIONS.ATTENDANCE}/${id}`));
+    await queueAwareRemove(userDocumentPath(COLLECTIONS.ATTENDANCE, id));
   }
 
   // --- Maintenance ---
@@ -206,16 +329,17 @@ export class TransportDataService {
   }
 
   static async addVehicle(data: Omit<VehicleRecord, 'id' | 'createdAt'>): Promise<void> {
-    const vehicleRef = push(ref(rtdb, COLLECTIONS.VEHICLES));
-    await set(vehicleRef, { ...data, createdAt: today() });
+    const vehicleRef = push(ref(rtdb, userCollectionPath(COLLECTIONS.VEHICLES)));
+    if (!vehicleRef.key) return;
+    await queueAwareSet(`${userCollectionPath(COLLECTIONS.VEHICLES)}/${vehicleRef.key}`, { ...data, createdAt: today() });
   }
 
   static async updateVehicle(id: string, updatesData: Partial<VehicleRecord>): Promise<void> {
-    await update(ref(rtdb, `${COLLECTIONS.VEHICLES}/${id}`), stripId(updatesData));
+    await queueAwareUpdate(userDocumentPath(COLLECTIONS.VEHICLES, id), stripId(updatesData) as Record<string, unknown>);
   }
 
   static async deleteVehicle(id: string): Promise<void> {
-    await remove(ref(rtdb, `${COLLECTIONS.VEHICLES}/${id}`));
+    await queueAwareRemove(userDocumentPath(COLLECTIONS.VEHICLES, id));
   }
 
   // --- Attention Messages ---
@@ -224,29 +348,39 @@ export class TransportDataService {
   }
 
   static async addAttentionMessage(data: Omit<AttentionMessage, 'id'>): Promise<void> {
-    const messageRef = push(ref(rtdb, COLLECTIONS.ATTENTION));
-    await set(messageRef, data);
+    const messageRef = push(ref(rtdb, userCollectionPath(COLLECTIONS.ATTENTION)));
+    if (!messageRef.key) return;
+    await queueAwareSet(`${userCollectionPath(COLLECTIONS.ATTENTION)}/${messageRef.key}`, data);
   }
 
   static async updateAttentionMessage(id: string, updatesData: Partial<AttentionMessage>): Promise<void> {
-    await update(ref(rtdb, `${COLLECTIONS.ATTENTION}/${id}`), stripId(updatesData));
+    await queueAwareUpdate(userDocumentPath(COLLECTIONS.ATTENTION, id), stripId(updatesData) as Record<string, unknown>);
   }
 
   static async deleteAttentionMessage(id: string): Promise<void> {
-    await remove(ref(rtdb, `${COLLECTIONS.ATTENTION}/${id}`));
+    await queueAwareRemove(userDocumentPath(COLLECTIONS.ATTENTION, id));
   }
 
   // --- Destinations ---
   static async getAllDestinations(): Promise<DestinationRecord[]> {
-    const snapshot = await get(child(ref(rtdb), COLLECTIONS.DESTINATIONS));
-    if (!snapshot.exists()) return [];
+    try {
+      const snapshot = await get(child(ref(rtdb), userCollectionPath(COLLECTIONS.DESTINATIONS)));
+      if (!snapshot.exists()) {
+        writeCache(COLLECTIONS.DESTINATIONS, []);
+        return [];
+      }
 
-    const data = snapshot.val() as Record<string, DestinationRecord>;
-    return Object.values(data);
+      const data = snapshot.val() as Record<string, DestinationRecord>;
+      const destinations = Object.values(data);
+      writeCache(COLLECTIONS.DESTINATIONS, destinations);
+      return destinations;
+    } catch {
+      return readCache<DestinationRecord>(COLLECTIONS.DESTINATIONS);
+    }
   }
 
   static async updateDestination(data: DestinationRecord): Promise<void> {
-    await set(ref(rtdb, `${COLLECTIONS.DESTINATIONS}/${data.studentId}`), data);
+    await queueAwareSet(userDocumentPath(COLLECTIONS.DESTINATIONS, data.studentId), data);
   }
 
   static async getDataByDate(date: string): Promise<{

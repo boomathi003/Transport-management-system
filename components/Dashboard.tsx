@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { TransportDataService } from '../services/dataService';
-import { Student, FeesRecord, VehicleRecord, ViewType } from '../types';
-import { ShieldAlert, CreditCard, Truck, Users, ArrowRight, Bell, CalendarClock, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { Student, FeesRecord, VehicleRecord, ViewType, AttendanceRecord } from '../types';
+import { ShieldAlert, CreditCard, Truck, Users, ArrowRight, Bell, CalendarClock, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
 
 interface DashboardProps {
   setView: (view: ViewType) => void;
@@ -12,19 +12,23 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
   const [students, setStudents] = useState<Student[]>([]);
   const [fees, setFees] = useState<FeesRecord[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
+  const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  const [globalSearch, setGlobalSearch] = useState('');
 
   useEffect(() => {
     let isMounted = true;
     const load = async () => {
-      const [studentData, feeData, vehicleData] = await Promise.all([
+      const [studentData, feeData, vehicleData, attendanceData] = await Promise.all([
         TransportDataService.getStudents(),
         TransportDataService.getFees(),
-        TransportDataService.getVehicles()
+        TransportDataService.getVehicles(),
+        TransportDataService.getAllAttendance()
       ]);
       if (!isMounted) return;
       setStudents(studentData);
       setFees(feeData);
       setVehicles(vehicleData);
+      setAttendance(attendanceData);
     };
     load();
     return () => {
@@ -75,6 +79,19 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
   };
 
   const upcomingAlerts = getUpcomingAlerts();
+  const searchedStudents = students.filter((student) => {
+    const q = globalSearch.toLowerCase().trim();
+    if (!q) return false;
+    return (
+      student.name.toLowerCase().includes(q) ||
+      student.registrationNumber.toLowerCase().includes(q) ||
+      student.seriesNumber.toLowerCase().includes(q)
+    );
+  }).slice(0, 5);
+
+  const todayAttendance = attendance.filter((record) => record.date === todayStr);
+  const presentCount = todayAttendance.filter((record) => record.status === 'Present').length;
+  const attendancePercent = todayAttendance.length ? Math.round((presentCount / todayAttendance.length) * 100) : 0;
 
   return (
     <div className="space-y-8 pb-10">
@@ -139,6 +156,50 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
           <h3 className="text-5xl font-black tracking-tighter">{vehicles.length}</h3>
         </div>
       </div>
+
+      <section className="bg-white rounded-[3rem] border border-slate-100 p-6 md:p-8 shadow-sm space-y-5">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <h3 className="font-black text-slate-800 uppercase tracking-wider text-sm">Global Student Search</h3>
+          <button onClick={() => setView(ViewType.STUDENTS)} className="text-xs font-black uppercase tracking-wider text-indigo-600 hover:underline">Open Registry</button>
+        </div>
+        <div className="relative">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          <input
+            value={globalSearch}
+            onChange={(e) => setGlobalSearch(e.target.value)}
+            placeholder="Search by name, reg no, or serial"
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50 pl-11 pr-4 py-3 text-sm font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-300"
+          />
+        </div>
+        {globalSearch && (
+          <div className="space-y-2">
+            {searchedStudents.length > 0 ? searchedStudents.map((student) => (
+              <div key={student.id} className="px-4 py-3 rounded-2xl border border-slate-100 bg-slate-50 flex justify-between items-center">
+                <div>
+                  <p className="font-black text-slate-800 text-sm">{student.name}</p>
+                  <p className="text-xs text-slate-500">{student.registrationNumber}</p>
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600">{student.seriesNumber}</span>
+              </div>
+            )) : <p className="text-sm text-slate-400">No students matched.</p>}
+          </div>
+        )}
+      </section>
+
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-[3rem] border border-slate-100 p-6 shadow-sm">
+          <h3 className="font-black text-slate-800 uppercase tracking-wider text-sm mb-4">Today Attendance Snapshot</h3>
+          <div className="space-y-3">
+            <p className="text-4xl font-black text-emerald-600">{attendancePercent}%</p>
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+              Present {presentCount} / {todayAttendance.length || students.length || 0}
+            </p>
+            <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${attendancePercent}%` }} />
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Fleet Maintenance Alerts Section */}
       <section className="space-y-4">

@@ -296,6 +296,16 @@ const FeesView: React.FC = () => {
   const dateTotalReceived = filteredFees.reduce((acc, curr) => acc + curr.paidAmount, 0);
   const dateTotalPending = filteredFees.reduce((acc, curr) => acc + (curr.totalAmount - curr.paidAmount), 0);
   const pendingCalc = formData.totalAmount - formData.paidAmount;
+  const monthlyFeeTrend = Array.from({ length: 6 }).map((_, idx) => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - (5 - idx));
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const total = fees
+      .filter((fee) => fee.feeDate?.startsWith(key))
+      .reduce((sum, fee) => sum + fee.paidAmount, 0);
+    return { label: d.toLocaleString('en-US', { month: 'short' }), total };
+  });
+  const maxTrend = Math.max(...monthlyFeeTrend.map((item) => item.total), 1);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -526,6 +536,21 @@ const FeesView: React.FC = () => {
           <PieChart size={80} className="absolute -right-4 text-white/10 group-hover:scale-110 transition-transform" />
         </div>
       </div>
+
+      <section className="bg-white rounded-[3rem] border border-slate-100 p-6 shadow-sm">
+        <h3 className="font-black text-slate-800 uppercase tracking-wider text-sm mb-4">Fee Trend (6 Months)</h3>
+        <div className="space-y-3">
+          {monthlyFeeTrend.map((item) => (
+            <div key={item.label} className="flex items-center gap-3">
+              <span className="w-10 text-xs font-black text-slate-500">{item.label}</span>
+              <div className="flex-1 h-3 bg-slate-100 rounded-full overflow-hidden">
+                <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${(item.total / maxTrend) * 100}%` }} />
+              </div>
+              <span className="text-xs font-black text-slate-700">Rs {item.total.toLocaleString('en-IN')}</span>
+            </div>
+          ))}
+        </div>
+      </section>
 
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">

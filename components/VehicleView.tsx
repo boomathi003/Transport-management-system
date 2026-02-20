@@ -111,14 +111,28 @@ const VehicleView: React.FC = () => {
     return new Date(dueDate) < new Date();
   };
 
+  const isExpiringSoon = (dueDate: string) => {
+    if (!dueDate) return false;
+    const due = new Date(dueDate).getTime();
+    const now = new Date().getTime();
+    const diffDays = Math.ceil((due - now) / (1000 * 60 * 60 * 24));
+    return diffDays >= 0 && diffDays <= 7;
+  };
+
   const getAlerts = (v: VehicleRecord) => {
     const alerts = [];
     if (isExpired(v.insuranceDueDate)) alerts.push('Insurance');
+    else if (isExpiringSoon(v.insuranceDueDate)) alerts.push('Insurance (soon)');
     if (isExpired(v.pollutionDueDate)) alerts.push('Pollution');
+    else if (isExpiringSoon(v.pollutionDueDate)) alerts.push('Pollution (soon)');
     if (isExpired(v.fcDueDate)) alerts.push('FC');
+    else if (isExpiringSoon(v.fcDueDate)) alerts.push('FC (soon)');
     if (isExpired(v.stickerDueDate)) alerts.push('Sticker');
+    else if (isExpiringSoon(v.stickerDueDate)) alerts.push('Sticker (soon)');
     if (isExpired(v.fireExtinguisherDueDate)) alerts.push('Fire Ext.');
+    else if (isExpiringSoon(v.fireExtinguisherDueDate)) alerts.push('Fire Ext. (soon)');
     if (isExpired(v.firstAidBoxDueDate)) alerts.push('First Aid');
+    else if (isExpiringSoon(v.firstAidBoxDueDate)) alerts.push('First Aid (soon)');
     return alerts;
   };
 

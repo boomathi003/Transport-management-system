@@ -18,9 +18,5 @@ export const getUserRole = (): UserRole => {
 };
 
 export const canAccessView = (view: ViewType): boolean => {
-  const role = getUserRole();
-  if (role === 'admin') return true;
-
-  // Staff has limited access in v1.
-  return ![ViewType.MAINTENANCE, ViewType.DAILY_LOG].includes(view);
+  return true;
 };

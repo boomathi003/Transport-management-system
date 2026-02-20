@@ -78,6 +78,16 @@ const writeCache = <T>(collection: string, data: T[]) => {
   }
 };
 
+const removeFromCacheById = (collection: string, id: string) => {
+  const existing = readCache<Record<string, unknown> & { id: string }>(collection);
+  writeCache(collection, existing.filter((item) => item.id !== id));
+};
+
+const removeFromCacheByStudentId = (collection: string, studentId: string) => {
+  const existing = readCache<Record<string, unknown> & { studentId?: string }>(collection);
+  writeCache(collection, existing.filter((item) => item.studentId !== studentId));
+};
+
 const readQueue = (): QueueOperation[] => {
   try {
     const raw = localStorage.getItem(queueKey());
@@ -259,6 +269,11 @@ export class TransportDataService {
   }
 
   static async deleteStudent(id: string): Promise<void> {
+    removeFromCacheById(COLLECTIONS.STUDENTS, id);
+    removeFromCacheById(COLLECTIONS.DESTINATIONS, id);
+    removeFromCacheByStudentId(COLLECTIONS.FEES, id);
+    removeFromCacheByStudentId(COLLECTIONS.ATTENDANCE, id);
+
     const [fees, attendance] = await Promise.all([
       getCollectionArray<Omit<FeesRecord, 'id'>>(COLLECTIONS.FEES),
       getCollectionArray<Omit<AttendanceRecord, 'id'>>(COLLECTIONS.ATTENDANCE)
@@ -296,6 +311,7 @@ export class TransportDataService {
   }
 
   static async deleteFee(id: string): Promise<void> {
+    removeFromCacheById(COLLECTIONS.FEES, id);
     await queueAwareRemove(userDocumentPath(COLLECTIONS.FEES, id));
   }
 
@@ -336,6 +352,7 @@ export class TransportDataService {
   }
 
   static async deleteAttendance(id: string): Promise<void> {
+    removeFromCacheById(COLLECTIONS.ATTENDANCE, id);
     await queueAwareRemove(userDocumentPath(COLLECTIONS.ATTENDANCE, id));
   }
 
@@ -355,6 +372,7 @@ export class TransportDataService {
   }
 
   static async deleteVehicle(id: string): Promise<void> {
+    removeFromCacheById(COLLECTIONS.VEHICLES, id);
     await queueAwareRemove(userDocumentPath(COLLECTIONS.VEHICLES, id));
   }
 
@@ -374,6 +392,7 @@ export class TransportDataService {
   }
 
   static async deleteAttentionMessage(id: string): Promise<void> {
+    removeFromCacheById(COLLECTIONS.ATTENTION, id);
     await queueAwareRemove(userDocumentPath(COLLECTIONS.ATTENTION, id));
   }
 

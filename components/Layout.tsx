@@ -2,6 +2,7 @@
 import React from 'react';
 import { ViewType } from '../types';
 import { canAccessView, getUserRole } from '../services/accessControl';
+import { auth } from '../services/firebase';
 import { 
   LayoutDashboard, 
   Users, 
@@ -36,6 +37,8 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setView, children }) => {
     { type: ViewType.DAILY_LOG, label: 'Daily Log', icon: CalendarDays },
   ];
   const role = getUserRole();
+  const uid = auth.currentUser?.uid ?? 'not-signed-in';
+  const shortUid = uid.length > 10 ? `${uid.slice(0, 6)}...${uid.slice(-4)}` : uid;
   const filteredNavItems = navItems.filter((item) =>
     canAccessView(item.type) &&
     item.label.toLowerCase().includes(searchTerm.trim().toLowerCase())
@@ -67,6 +70,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setView, children }) => {
             <h1 className="font-black text-2xl tracking-tighter uppercase leading-none">Transport</h1>
             <p className="text-indigo-200 text-[10px] font-black uppercase tracking-widest mt-2">Management Suite</p>
             <p className="text-[9px] font-black uppercase tracking-[0.2em] mt-2 text-indigo-100/80">{role} access</p>
+            <p className="text-[9px] font-black tracking-[0.08em] mt-2 text-indigo-100/70">UID: {shortUid}</p>
           </div>
         </div>
         

@@ -10,8 +10,20 @@ const DailyLogView: React.FC = () => {
   const [students, setStudents] = useState<Student[]>([]);
 
   useEffect(() => {
-    setLogData(TransportDataService.getDataByDate(selectedDate));
-    setStudents(TransportDataService.getStudents());
+    let isMounted = true;
+    const load = async () => {
+      const [data, studentData] = await Promise.all([
+        TransportDataService.getDataByDate(selectedDate),
+        TransportDataService.getStudents()
+      ]);
+      if (!isMounted) return;
+      setLogData(data);
+      setStudents(studentData);
+    };
+    load();
+    return () => {
+      isMounted = false;
+    };
   }, [selectedDate]);
 
   return (

@@ -82,11 +82,11 @@ const FeesView: React.FC = () => {
   }, []);
 
   const loadData = async () => {
-    const [feesData, studentsData] = await Promise.all([
+    const [feesData, studentsData, destData] = await Promise.all([
       FeesApi.fetchFees(),
-      StudentApi.fetchStudents()
+      StudentApi.fetchStudents(),
+      TransportDataService.getAllDestinations()
     ]);
-    const destData = TransportDataService.getAllDestinations();
     setFees(feesData);
     setStudents(studentsData);
     setDestinations(destData);
@@ -270,9 +270,9 @@ const FeesView: React.FC = () => {
     setStatusMessage(null);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (window.confirm('Delete this fee record permanently?')) {
-      TransportDataService.deleteFee(id);
+      await TransportDataService.deleteFee(id);
       loadData();
     }
   };

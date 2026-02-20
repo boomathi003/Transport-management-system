@@ -30,9 +30,11 @@ const AttendanceView: React.FC = () => {
   const today = new Date().toISOString().split('T')[0];
   const isPastDate = selectedDate < today;
 
-  const loadData = () => {
-    const studentList = TransportDataService.getStudents();
-    const allAttendance = TransportDataService.getAllAttendance();
+  const loadData = async () => {
+    const [studentList, allAttendance] = await Promise.all([
+      TransportDataService.getStudents(),
+      TransportDataService.getAllAttendance()
+    ]);
     const dateAttendance = allAttendance.filter(r => r.date === selectedDate);
     
     const attendanceMap: Record<string, AttendanceStatus> = {};
@@ -65,8 +67,8 @@ const AttendanceView: React.FC = () => {
     setTimeout(() => setIsUpdatingAll(false), 400);
   };
 
-  const saveAttendance = () => {
-    TransportDataService.saveAttendanceBatch(selectedDate, localAttendance);
+  const saveAttendance = async () => {
+    await TransportDataService.saveAttendanceBatch(selectedDate, localAttendance);
     setHasChanges(false);
     setShowConfirmation(true);
     setTimeout(() => setShowConfirmation(false), 2000);

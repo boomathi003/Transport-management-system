@@ -38,8 +38,9 @@ const VehicleView: React.FC = () => {
     kmCalculation: 0, stack: '', usage: ''
   });
 
-  const loadVehicles = () => {
-    setVehicles(TransportDataService.getVehicles());
+  const loadVehicles = async () => {
+    const data = await TransportDataService.getVehicles();
+    setVehicles(data);
   };
 
   useEffect(() => {
@@ -52,17 +53,17 @@ const VehicleView: React.FC = () => {
     setFormData(prev => ({ ...prev, kmCalculation: diff > 0 ? diff : 0 }));
   }, [formData.dieselKMReading, formData.previousDieselKM]);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.busNumber) return alert("Bus Number is required!");
     
     if (editingId) {
-      TransportDataService.updateVehicle(editingId, formData);
+      await TransportDataService.updateVehicle(editingId, formData);
     } else {
-      TransportDataService.addVehicle(formData);
+      await TransportDataService.addVehicle(formData);
     }
     
-    loadVehicles();
+    await loadVehicles();
     closeModal();
     setShowConfirmation(true);
     setTimeout(() => setShowConfirmation(false), 3000);
@@ -98,9 +99,9 @@ const VehicleView: React.FC = () => {
     });
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (window.confirm("Confirm: Delete vehicle profile from master SQL?")) {
-      TransportDataService.deleteVehicle(id);
+      await TransportDataService.deleteVehicle(id);
       loadVehicles();
     }
   };

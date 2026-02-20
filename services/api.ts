@@ -5,13 +5,13 @@ import { TransportDataService } from './dataService';
 export const StudentApi = {
   async saveStudent(data: Omit<Student, 'id' | 'createdAt'>): Promise<{ success: boolean; message: string; data?: Student }> {
     return new Promise((resolve) => {
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           if (!data.name || !data.registrationNumber || !data.seriesNumber) {
             resolve({ success: false, message: "Validation Error: Missing mandatory fields." });
             return;
           }
-          TransportDataService.addStudent(data);
+          await TransportDataService.addStudent(data);
           resolve({ success: true, message: "Student record successfully saved to SQL database." });
         } catch (error) {
           resolve({ success: false, message: "Server Error: Failed to process student record." });
@@ -22,7 +22,7 @@ export const StudentApi = {
 
   async updateStudent(id: string, data: Partial<Student>): Promise<{ success: boolean; message: string }> {
     return new Promise((resolve) => {
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           // Updated: Registration Number, Department, and Series Number are now changeable per requirements
           if (!data.name) {
@@ -30,7 +30,7 @@ export const StudentApi = {
             return;
           }
 
-          TransportDataService.updateStudent(id, data);
+          await TransportDataService.updateStudent(id, data);
           resolve({ success: true, message: "Student record successfully updated in the SQL database." });
         } catch (error) {
           resolve({ success: false, message: "Server Error: Failed to update student record." });
@@ -41,8 +41,8 @@ export const StudentApi = {
 
   async fetchStudents(): Promise<Student[]> {
     return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve(TransportDataService.getStudents());
+      setTimeout(async () => {
+        resolve(await TransportDataService.getStudents());
       }, 300);
     });
   }
@@ -51,7 +51,7 @@ export const StudentApi = {
 export const FeesApi = {
   async saveFee(data: Omit<FeesRecord, 'id' | 'createdAt'>): Promise<{ success: boolean; message: string; data?: FeesRecord }> {
     return new Promise((resolve) => {
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           if (!data.studentId || data.totalAmount <= 0) {
             resolve({ success: false, message: "Validation Failed: Student and Total Fee are required." });
@@ -59,7 +59,7 @@ export const FeesApi = {
           }
 
           // In a real backend, we check for a record on that specific feeDate
-          const existing = TransportDataService.getFees().find(f => 
+          const existing = (await TransportDataService.getFees()).find(f => 
             f.studentId === data.studentId && 
             f.feeType === data.feeType && 
             f.feeDate === data.feeDate
@@ -76,7 +76,7 @@ export const FeesApi = {
           else status = 'Pending';
 
           const recordToSave = { ...data, status };
-          TransportDataService.addFee(recordToSave);
+          await TransportDataService.addFee(recordToSave);
 
           resolve({ 
             success: true, 
@@ -92,7 +92,7 @@ export const FeesApi = {
 
   async updateFee(id: string, data: Partial<FeesRecord>): Promise<{ success: boolean; message: string }> {
     return new Promise((resolve) => {
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
           let status = data.status;
           if (data.totalAmount !== undefined && data.paidAmount !== undefined) {
@@ -101,7 +101,7 @@ export const FeesApi = {
              else status = 'Pending';
           }
 
-          TransportDataService.updateFee(id, { ...data, status });
+          await TransportDataService.updateFee(id, { ...data, status });
           resolve({ success: true, message: "Fee record updated successfully in SQL database." });
         } catch (error) {
           resolve({ success: false, message: "Backend Error: Failed to update SQL record." });
@@ -112,8 +112,8 @@ export const FeesApi = {
 
   async fetchFees(): Promise<FeesRecord[]> {
     return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve(TransportDataService.getFees());
+      setTimeout(async () => {
+        resolve(await TransportDataService.getFees());
       }, 300);
     });
   }

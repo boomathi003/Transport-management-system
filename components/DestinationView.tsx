@@ -41,9 +41,13 @@ const DestinationView: React.FC = () => {
     distance: 0
   });
 
-  const loadData = () => {
-    setStudents(TransportDataService.getStudents());
-    setDestRecords(TransportDataService.getAllDestinations());
+  const loadData = async () => {
+    const [studentData, destData] = await Promise.all([
+      TransportDataService.getStudents(),
+      TransportDataService.getAllDestinations()
+    ]);
+    setStudents(studentData);
+    setDestRecords(destData);
   };
 
   useEffect(() => {
@@ -66,11 +70,11 @@ const DestinationView: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingStudentId) return;
 
-    TransportDataService.updateDestination({ 
+    await TransportDataService.updateDestination({ 
       studentId: editingStudentId, 
       ...formData 
     });

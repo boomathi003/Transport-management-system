@@ -14,9 +14,22 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
   const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
 
   useEffect(() => {
-    setStudents(TransportDataService.getStudents());
-    setFees(TransportDataService.getFees());
-    setVehicles(TransportDataService.getVehicles());
+    let isMounted = true;
+    const load = async () => {
+      const [studentData, feeData, vehicleData] = await Promise.all([
+        TransportDataService.getStudents(),
+        TransportDataService.getFees(),
+        TransportDataService.getVehicles()
+      ]);
+      if (!isMounted) return;
+      setStudents(studentData);
+      setFees(feeData);
+      setVehicles(vehicleData);
+    };
+    load();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const todayStr = new Date().toISOString().split('T')[0];

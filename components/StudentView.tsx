@@ -79,9 +79,9 @@ const StudentView: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (window.confirm('Are you sure you want to delete this student profile?')) {
-      TransportDataService.deleteStudent(id);
+      await TransportDataService.deleteStudent(id);
       loadStudents();
     }
   };

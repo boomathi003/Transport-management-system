@@ -15,8 +15,8 @@ const AttentionView: React.FC = () => {
     priority: 'Medium' as Priority
   });
 
-  const loadMessages = () => {
-    const msgs = TransportDataService.getAttentionMessages();
+  const loadMessages = async () => {
+    const msgs = await TransportDataService.getAttentionMessages();
     setMessages(msgs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
   };
 
@@ -24,14 +24,14 @@ const AttentionView: React.FC = () => {
     loadMessages();
   }, []);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingId) {
-      TransportDataService.updateAttentionMessage(editingId, formData);
+      await TransportDataService.updateAttentionMessage(editingId, formData);
     } else {
-      TransportDataService.addAttentionMessage(formData);
+      await TransportDataService.addAttentionMessage(formData);
     }
-    loadMessages();
+    await loadMessages();
     closeModal();
     alert("Record Saved Successfully!");
   };
@@ -58,9 +58,9 @@ const AttentionView: React.FC = () => {
     });
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (window.confirm("Are you sure you want to delete this message?")) {
-      TransportDataService.deleteAttentionMessage(id);
+      await TransportDataService.deleteAttentionMessage(id);
       loadMessages();
     }
   };

@@ -1,203 +1,269 @@
+import {
+  child,
+  get,
+  push,
+  ref,
+  remove,
+  set,
+  update
+} from 'firebase/database';
+import {
+  Student,
+  AttendanceRecord,
+  FeesRecord,
+  VehicleRecord,
+  AttendanceStatus,
+  AttentionMessage,
+  DestinationRecord
+} from '../types';
+import { rtdb } from './firebase';
 
-import { Student, AttendanceRecord, FeesRecord, VehicleRecord, AttendanceStatus, PaymentStatus, AttentionMessage, DestinationRecord } from '../types';
-
-const STORAGE_KEYS = {
-  STUDENTS: 'ctms_students',
-  ATTENDANCE: 'ctms_attendance',
-  FEES: 'ctms_fees',
-  VEHICLES: 'ctms_vehicles',
-  ATTENTION: 'ctms_attention',
-  DESTINATIONS: 'ctms_destinations',
-};
+const COLLECTIONS = {
+  STUDENTS: 'students',
+  ATTENDANCE: 'attendance',
+  FEES: 'fees',
+  VEHICLES: 'vehicles',
+  ATTENTION: 'attention',
+  DESTINATIONS: 'destinations'
+} as const;
+const PLACEHOLDER_KEY = '__placeholder';
 
 const DEFAULT_STUDENTS: Omit<Student, 'id' | 'createdAt'>[] = [
   { name: 'Sathish Kumar R', registrationNumber: '2322k1443', seriesNumber: 'S-001', department: 'Computer Science', academicYear: '3rd Year / 5th Sem' },
   { name: 'Karthikeyan M', registrationNumber: '2322k1417', seriesNumber: 'S-002', department: 'Computer Science', academicYear: '2nd Year / 3rd Sem' },
-  { name: 'Abdul Kalam J', registrationNumber: '2322k1398', seriesNumber: 'S-003', department: 'Computer Science', academicYear: '4th Year / 7th Sem' },
+  { name: 'Abdul Kalam J', registrationNumber: '2322k1398', seriesNumber: 'S-003', department: 'Computer Science', academicYear: '4th Year / 7th Sem' }
 ];
 
-export class TransportDataService {
-  private static get<T>(key: string, defaultValue: T): T {
-    const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : defaultValue;
-  }
+const today = () => new Date().toISOString().split('T')[0];
 
-  private static save<T>(key: string, data: T): void {
-    localStorage.setItem(key, JSON.stringify(data));
-  }
+const stripId = <T extends { id?: string }>(data: T) => {
+  const { id, ...rest } = data;
+  return rest;
+};
 
-  static getStudents(): Student[] {
-    const students = this.get<Student[]>(STORAGE_KEYS.STUDENTS, []);
-    if (students.length === 0) {
-      const initial = DEFAULT_STUDENTS.map((s, idx) => ({
-        ...s,
-        id: (idx + 1).toString(),
-        createdAt: new Date().toISOString().split('T')[0]
-      }));
-      this.save(STORAGE_KEYS.STUDENTS, initial);
-      
-      // Initialize default destinations for these students
-      const defaultDestinations: DestinationRecord[] = initial.map(s => ({
-        studentId: s.id,
-        pickupPoint: 'Pollachi',
-        dropPoint: 'Poosaripatti',
-        routeName: 'ROUTE-01',
-        distance: 14
-      }));
-      this.save(STORAGE_KEYS.DESTINATIONS, defaultDestinations);
-      
-      return initial;
+const getCollectionMap = async <T>(path: string): Promise<Record<string, T>> => {
+  const snapshot = await get(child(ref(rtdb), path));
+  if (!snapshot.exists()) return {};
+  return (snapshot.val() as Record<string, T>) ?? {};
+};
+
+const getCollectionArray = async <T>(path: string): Promise<Array<T & { id: string }>> => {
+  const data = await getCollectionMap<T>(path);
+  return Object.entries(data)
+    .filter(([id]) => id !== PLACEHOLDER_KEY)
+    .map(([id, value]) => ({ id, ...(value as T) }));
+};
+
+const ensureCollectionsInitialized = async () => {
+  const paths = [
+    COLLECTIONS.ATTENDANCE,
+    COLLECTIONS.FEES,
+    COLLECTIONS.VEHICLES,
+    COLLECTIONS.ATTENTION
+  ];
+
+  const snapshots = await Promise.all(
+    paths.map((path) => get(child(ref(rtdb), path)))
+  );
+
+  const updates: Record<string, boolean> = {};
+  snapshots.forEach((snapshot, index) => {
+    if (!snapshot.exists()) {
+      updates[`${paths[index]}/${PLACEHOLDER_KEY}`] = true;
     }
+  });
+
+  if (Object.keys(updates).length > 0) {
+    await update(ref(rtdb), updates);
+  }
+};
+
+export class TransportDataService {
+  // --- Students ---
+  static async getStudents(): Promise<Student[]> {
+    await ensureCollectionsInitialized();
+    const students = await getCollectionArray<Omit<Student, 'id'>>(COLLECTIONS.STUDENTS);
+
+    if (students.length === 0) {
+      const updates: Record<string, unknown> = {};
+
+      DEFAULT_STUDENTS.forEach((student) => {
+        const studentId = push(ref(rtdb, COLLECTIONS.STUDENTS)).key;
+        if (!studentId) return;
+
+        updates[`${COLLECTIONS.STUDENTS}/${studentId}`] = { ...student, createdAt: today() };
+        const destination: DestinationRecord = {
+          studentId,
+          pickupPoint: 'Pollachi',
+          dropPoint: 'Poosaripatti',
+          routeName: 'ROUTE-01',
+          distance: 14
+        };
+        updates[`${COLLECTIONS.DESTINATIONS}/${studentId}`] = destination;
+      });
+
+      if (Object.keys(updates).length > 0) {
+        await update(ref(rtdb), updates);
+      }
+
+      return this.getStudents();
+    }
+
     return students;
   }
 
-  static addStudent(data: Omit<Student, 'id' | 'createdAt'>): void {
-    const students = this.getStudents();
-    const newStudent = { ...data, id: Date.now().toString(), createdAt: new Date().toISOString().split('T')[0] };
-    this.save(STORAGE_KEYS.STUDENTS, [...students, newStudent]);
+  static async addStudent(data: Omit<Student, 'id' | 'createdAt'>): Promise<void> {
+    const studentRef = push(ref(rtdb, COLLECTIONS.STUDENTS));
+    await set(studentRef, { ...data, createdAt: today() });
   }
 
-  static updateStudent(id: string, updates: Partial<Student>): void {
-    const students = this.getStudents();
-    this.save(STORAGE_KEYS.STUDENTS, students.map(s => s.id === id ? { ...s, ...updates } : s));
+  static async updateStudent(id: string, updatesData: Partial<Student>): Promise<void> {
+    await update(ref(rtdb, `${COLLECTIONS.STUDENTS}/${id}`), stripId(updatesData));
   }
 
-  static deleteStudent(id: string): void {
-    const students = this.getStudents();
-    this.save(STORAGE_KEYS.STUDENTS, students.filter(s => s.id !== id));
-    this.save(STORAGE_KEYS.FEES, this.getFees().filter(f => f.studentId !== id));
-    this.save(STORAGE_KEYS.ATTENDANCE, this.getAllAttendance().filter(a => a.studentId !== id));
-    this.save(STORAGE_KEYS.DESTINATIONS, this.getAllDestinations().filter(d => d.studentId !== id));
+  static async deleteStudent(id: string): Promise<void> {
+    const [fees, attendance] = await Promise.all([
+      getCollectionArray<Omit<FeesRecord, 'id'>>(COLLECTIONS.FEES),
+      getCollectionArray<Omit<AttendanceRecord, 'id'>>(COLLECTIONS.ATTENDANCE)
+    ]);
+
+    const updates: Record<string, null> = {
+      [`${COLLECTIONS.STUDENTS}/${id}`]: null,
+      [`${COLLECTIONS.DESTINATIONS}/${id}`]: null
+    };
+
+    fees.filter((fee) => fee.studentId === id).forEach((fee) => {
+      updates[`${COLLECTIONS.FEES}/${fee.id}`] = null;
+    });
+
+    attendance.filter((record) => record.studentId === id).forEach((record) => {
+      updates[`${COLLECTIONS.ATTENDANCE}/${record.id}`] = null;
+    });
+
+    await update(ref(rtdb), updates);
   }
 
   // --- Fees ---
-  static getFees(): FeesRecord[] {
-    return this.get(STORAGE_KEYS.FEES, []);
+  static async getFees(): Promise<FeesRecord[]> {
+    return getCollectionArray<Omit<FeesRecord, 'id'>>(COLLECTIONS.FEES);
   }
 
-  static addFee(data: Omit<FeesRecord, 'id' | 'createdAt'>): void {
-    const fees = this.getFees();
-    const newFee: FeesRecord = { 
-      ...data, 
-      id: Date.now().toString(), 
-      createdAt: new Date().toISOString().split('T')[0] 
-    };
-    this.save(STORAGE_KEYS.FEES, [...fees, newFee]);
+  static async addFee(data: Omit<FeesRecord, 'id' | 'createdAt'>): Promise<void> {
+    const feeRef = push(ref(rtdb, COLLECTIONS.FEES));
+    await set(feeRef, { ...data, createdAt: today() });
   }
 
-  static updateFee(id: string, updates: Partial<FeesRecord>): void {
-    const fees = this.getFees();
-    this.save(STORAGE_KEYS.FEES, fees.map(f => f.id === id ? { ...f, ...updates } : f));
+  static async updateFee(id: string, updatesData: Partial<FeesRecord>): Promise<void> {
+    await update(ref(rtdb, `${COLLECTIONS.FEES}/${id}`), stripId(updatesData));
   }
 
-  static deleteFee(id: string): void {
-    const fees = this.getFees();
-    this.save(STORAGE_KEYS.FEES, fees.filter(f => f.id !== id));
+  static async deleteFee(id: string): Promise<void> {
+    await remove(ref(rtdb, `${COLLECTIONS.FEES}/${id}`));
   }
 
   // --- Attendance ---
-  static getAllAttendance(): AttendanceRecord[] {
-    return this.get(STORAGE_KEYS.ATTENDANCE, []);
+  static async getAllAttendance(): Promise<AttendanceRecord[]> {
+    return getCollectionArray<Omit<AttendanceRecord, 'id'>>(COLLECTIONS.ATTENDANCE);
   }
 
-  static markAttendance(studentId: string, date: string, status: AttendanceStatus): void {
-    const records = this.getAllAttendance();
-    const existingIndex = records.findIndex(r => r.studentId === studentId && r.date === date);
-    if (existingIndex > -1) {
-      records[existingIndex].status = status;
-      this.save(STORAGE_KEYS.ATTENDANCE, records);
-    } else {
-      const newRecord: AttendanceRecord = {
-        id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-        studentId,
-        date,
-        status
-      };
-      this.save(STORAGE_KEYS.ATTENDANCE, [...records, newRecord]);
+  static async markAttendance(studentId: string, date: string, status: AttendanceStatus): Promise<void> {
+    const attendance = await this.getAllAttendance();
+    const existing = attendance.find((record) => record.studentId === studentId && record.date === date);
+
+    if (existing) {
+      await update(ref(rtdb, `${COLLECTIONS.ATTENDANCE}/${existing.id}`), { status });
+      return;
     }
+
+    const newRef = push(ref(rtdb, COLLECTIONS.ATTENDANCE));
+    await set(newRef, { studentId, date, status });
   }
 
-  static saveAttendanceBatch(date: string, attendanceMap: Record<string, AttendanceStatus>): void {
-    const records = this.getAllAttendance();
-    const otherDateRecords = records.filter(r => r.date !== date);
-    
-    const newRecordsForDate = Object.entries(attendanceMap).map(([studentId, status], index) => ({
-      id: `${Date.now()}-${index}-${Math.random().toString(36).substring(2, 7)}`,
-      studentId,
-      date,
-      status
-    }));
+  static async saveAttendanceBatch(date: string, attendanceMap: Record<string, AttendanceStatus>): Promise<void> {
+    const existing = await this.getAllAttendance();
+    const updates: Record<string, unknown> = {};
 
-    this.save(STORAGE_KEYS.ATTENDANCE, [...otherDateRecords, ...newRecordsForDate]);
+    existing.filter((record) => record.date === date).forEach((record) => {
+      updates[`${COLLECTIONS.ATTENDANCE}/${record.id}`] = null;
+    });
+
+    Object.entries(attendanceMap).forEach(([studentId, status]) => {
+      const attendanceId = push(ref(rtdb, COLLECTIONS.ATTENDANCE)).key;
+      if (!attendanceId) return;
+      updates[`${COLLECTIONS.ATTENDANCE}/${attendanceId}`] = { studentId, date, status };
+    });
+
+    await update(ref(rtdb), updates);
   }
 
-  static deleteAttendance(id: string): void {
-    const records = this.getAllAttendance();
-    this.save(STORAGE_KEYS.ATTENDANCE, records.filter(r => r.id !== id));
+  static async deleteAttendance(id: string): Promise<void> {
+    await remove(ref(rtdb, `${COLLECTIONS.ATTENDANCE}/${id}`));
   }
 
   // --- Maintenance ---
-  static getVehicles(): VehicleRecord[] {
-    return this.get(STORAGE_KEYS.VEHICLES, []);
+  static async getVehicles(): Promise<VehicleRecord[]> {
+    return getCollectionArray<Omit<VehicleRecord, 'id'>>(COLLECTIONS.VEHICLES);
   }
 
-  static addVehicle(data: Omit<VehicleRecord, 'id' | 'createdAt'>): void {
-    const vehicles = this.getVehicles();
-    const newVehicle = { ...data, id: Date.now().toString(), createdAt: new Date().toISOString().split('T')[0] };
-    this.save(STORAGE_KEYS.VEHICLES, [...vehicles, newVehicle]);
+  static async addVehicle(data: Omit<VehicleRecord, 'id' | 'createdAt'>): Promise<void> {
+    const vehicleRef = push(ref(rtdb, COLLECTIONS.VEHICLES));
+    await set(vehicleRef, { ...data, createdAt: today() });
   }
 
-  static updateVehicle(id: string, updates: Partial<VehicleRecord>): void {
-    const vehicles = this.getVehicles();
-    this.save(STORAGE_KEYS.VEHICLES, vehicles.map(v => v.id === id ? { ...v, ...updates } : v));
+  static async updateVehicle(id: string, updatesData: Partial<VehicleRecord>): Promise<void> {
+    await update(ref(rtdb, `${COLLECTIONS.VEHICLES}/${id}`), stripId(updatesData));
   }
 
-  static deleteVehicle(id: string): void {
-    const vehicles = this.getVehicles();
-    this.save(STORAGE_KEYS.VEHICLES, vehicles.filter(v => v.id !== id));
+  static async deleteVehicle(id: string): Promise<void> {
+    await remove(ref(rtdb, `${COLLECTIONS.VEHICLES}/${id}`));
   }
 
   // --- Attention Messages ---
-  static getAttentionMessages(): AttentionMessage[] {
-    return this.get(STORAGE_KEYS.ATTENTION, []);
+  static async getAttentionMessages(): Promise<AttentionMessage[]> {
+    return getCollectionArray<Omit<AttentionMessage, 'id'>>(COLLECTIONS.ATTENTION);
   }
 
-  static addAttentionMessage(data: Omit<AttentionMessage, 'id'>): void {
-    const messages = this.getAttentionMessages();
-    const newMessage = { ...data, id: Date.now().toString() };
-    this.save(STORAGE_KEYS.ATTENTION, [...messages, newMessage]);
+  static async addAttentionMessage(data: Omit<AttentionMessage, 'id'>): Promise<void> {
+    const messageRef = push(ref(rtdb, COLLECTIONS.ATTENTION));
+    await set(messageRef, data);
   }
 
-  static updateAttentionMessage(id: string, updates: Partial<AttentionMessage>): void {
-    const messages = this.getAttentionMessages();
-    this.save(STORAGE_KEYS.ATTENTION, messages.map(m => m.id === id ? { ...m, ...updates } : m));
+  static async updateAttentionMessage(id: string, updatesData: Partial<AttentionMessage>): Promise<void> {
+    await update(ref(rtdb, `${COLLECTIONS.ATTENTION}/${id}`), stripId(updatesData));
   }
 
-  static deleteAttentionMessage(id: string): void {
-    const messages = this.getAttentionMessages();
-    this.save(STORAGE_KEYS.ATTENTION, messages.filter(m => m.id !== id));
+  static async deleteAttentionMessage(id: string): Promise<void> {
+    await remove(ref(rtdb, `${COLLECTIONS.ATTENTION}/${id}`));
   }
 
   // --- Destinations ---
-  static getAllDestinations(): DestinationRecord[] {
-    return this.get(STORAGE_KEYS.DESTINATIONS, []);
+  static async getAllDestinations(): Promise<DestinationRecord[]> {
+    const snapshot = await get(child(ref(rtdb), COLLECTIONS.DESTINATIONS));
+    if (!snapshot.exists()) return [];
+
+    const data = snapshot.val() as Record<string, DestinationRecord>;
+    return Object.values(data);
   }
 
-  static updateDestination(data: DestinationRecord): void {
-    const records = this.getAllDestinations();
-    const index = records.findIndex(r => r.studentId === data.studentId);
-    if (index > -1) {
-      records[index] = data;
-      this.save(STORAGE_KEYS.DESTINATIONS, records);
-    } else {
-      this.save(STORAGE_KEYS.DESTINATIONS, [...records, data]);
-    }
+  static async updateDestination(data: DestinationRecord): Promise<void> {
+    await set(ref(rtdb, `${COLLECTIONS.DESTINATIONS}/${data.studentId}`), data);
   }
 
-  static getDataByDate(date: string) {
-    const fees = this.getFees().filter(f => f.feeDate === date);
-    const vehicles = this.getVehicles().filter(v => v.createdAt === date);
-    const attendance = this.getAllAttendance().filter(a => a.date === date);
-    return { fees, vehicles, attendance };
+  static async getDataByDate(date: string): Promise<{
+    fees: FeesRecord[];
+    vehicles: VehicleRecord[];
+    attendance: AttendanceRecord[];
+  }> {
+    const [fees, vehicles, attendance] = await Promise.all([
+      this.getFees(),
+      this.getVehicles(),
+      this.getAllAttendance()
+    ]);
+
+    return {
+      fees: fees.filter((item) => item.feeDate === date),
+      vehicles: vehicles.filter((item) => item.createdAt === date),
+      attendance: attendance.filter((item) => item.date === date)
+    };
   }
 }

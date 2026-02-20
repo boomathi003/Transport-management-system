@@ -6,6 +6,7 @@ import {
   Users, 
   CreditCard, 
   CalendarDays,
+  Search,
   Menu, 
   X,
   Bus,
@@ -22,6 +23,7 @@ interface LayoutProps {
 
 const Layout: React.FC<LayoutProps> = ({ currentView, setView, children }) => {
   const [isSidebarOpen, setSidebarOpen] = React.useState(false);
+  const [searchTerm, setSearchTerm] = React.useState('');
 
   const navItems = [
     { type: ViewType.DASHBOARD, label: 'Home', icon: LayoutDashboard },
@@ -32,6 +34,9 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setView, children }) => {
     { type: ViewType.MAINTENANCE, label: 'Maintenance', icon: Wrench },
     { type: ViewType.DAILY_LOG, label: 'Daily Log', icon: CalendarDays },
   ];
+  const filteredNavItems = navItems.filter((item) =>
+    item.label.toLowerCase().includes(searchTerm.trim().toLowerCase())
+  );
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-slate-100">
@@ -61,8 +66,21 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setView, children }) => {
           </div>
         </div>
         
-        <nav className="mt-8 px-6 space-y-2 pb-10">
-          {navItems.map((item) => {
+        <div className="mt-6 px-6">
+          <label className="relative block">
+            <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search menu"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-11 pr-3 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+          </label>
+        </div>
+
+        <nav className="mt-5 px-6 space-y-2 pb-10">
+          {filteredNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentView === item.type;
             return (
@@ -85,6 +103,9 @@ const Layout: React.FC<LayoutProps> = ({ currentView, setView, children }) => {
               </button>
             );
           })}
+          {filteredNavItems.length === 0 && (
+            <p className="px-4 py-3 text-sm text-slate-400">No menu found.</p>
+          )}
         </nav>
       </aside>
 

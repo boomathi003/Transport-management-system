@@ -104,24 +104,36 @@ const pushQueue = (op: QueueOperation) => {
 const queueAwareSet = async (path: string, data: unknown) => {
   try {
     await set(ref(rtdb, path), data);
-  } catch {
-    pushQueue({ type: 'set', path, data });
+  } catch (error) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      pushQueue({ type: 'set', path, data });
+      return;
+    }
+    throw error;
   }
 };
 
 const queueAwareUpdate = async (path: string, data: Record<string, unknown>) => {
   try {
     await update(ref(rtdb, path), data);
-  } catch {
-    pushQueue({ type: 'update', path, data });
+  } catch (error) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      pushQueue({ type: 'update', path, data });
+      return;
+    }
+    throw error;
   }
 };
 
 const queueAwareRemove = async (path: string) => {
   try {
     await remove(ref(rtdb, path));
-  } catch {
-    pushQueue({ type: 'remove', path });
+  } catch (error) {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      pushQueue({ type: 'remove', path });
+      return;
+    }
+    throw error;
   }
 };
 

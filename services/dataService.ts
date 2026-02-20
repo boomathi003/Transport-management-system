@@ -137,6 +137,10 @@ const queueAwareRemove = async (path: string) => {
   }
 };
 
+const queueAwareUserUpdate = async (updates: Record<string, unknown>) => {
+  await queueAwareUpdate(userRootPath(), updates);
+};
+
 const getCollectionMap = async <T>(collection: string): Promise<Record<string, T>> => {
   const snapshot = await get(child(ref(rtdb), userCollectionPath(collection)));
   if (!snapshot.exists()) return {};
@@ -171,12 +175,12 @@ const ensureCollectionsInitialized = async () => {
   const updates: Record<string, boolean> = {};
   snapshots.forEach((snapshot, index) => {
     if (!snapshot.exists()) {
-      updates[`${userCollectionPath(paths[index])}/${PLACEHOLDER_KEY}`] = true;
+      updates[`${paths[index]}/${PLACEHOLDER_KEY}`] = true;
     }
   });
 
   if (Object.keys(updates).length > 0) {
-    await update(ref(rtdb), updates);
+    await queueAwareUserUpdate(updates);
   }
 };
 
@@ -223,7 +227,7 @@ export class TransportDataService {
         const studentId = push(ref(rtdb, userCollectionPath(COLLECTIONS.STUDENTS))).key;
         if (!studentId) return;
 
-        updates[`${userCollectionPath(COLLECTIONS.STUDENTS)}/${studentId}`] = { ...student, createdAt: today() };
+        updates[`${COLLECTIONS.STUDENTS}/${studentId}`] = { ...student, createdAt: today() };
         const destination: DestinationRecord = {
           studentId,
           pickupPoint: 'Pollachi',
@@ -231,11 +235,11 @@ export class TransportDataService {
           routeName: 'ROUTE-01',
           distance: 14
         };
-        updates[`${userCollectionPath(COLLECTIONS.DESTINATIONS)}/${studentId}`] = destination;
+        updates[`${COLLECTIONS.DESTINATIONS}/${studentId}`] = destination;
       });
 
       if (Object.keys(updates).length > 0) {
-        await queueAwareUpdate('', updates);
+        await queueAwareUserUpdate(updates);
       }
 
       return this.getStudents();
@@ -261,19 +265,19 @@ export class TransportDataService {
     ]);
 
     const updates: Record<string, null> = {
-      [userDocumentPath(COLLECTIONS.STUDENTS, id)]: null,
-      [userDocumentPath(COLLECTIONS.DESTINATIONS, id)]: null
+      [`${COLLECTIONS.STUDENTS}/${id}`]: null,
+      [`${COLLECTIONS.DESTINATIONS}/${id}`]: null
     };
 
     fees.filter((fee) => fee.studentId === id).forEach((fee) => {
-      updates[userDocumentPath(COLLECTIONS.FEES, fee.id)] = null;
+      updates[`${COLLECTIONS.FEES}/${fee.id}`] = null;
     });
 
     attendance.filter((record) => record.studentId === id).forEach((record) => {
-      updates[userDocumentPath(COLLECTIONS.ATTENDANCE, record.id)] = null;
+      updates[`${COLLECTIONS.ATTENDANCE}/${record.id}`] = null;
     });
 
-    await queueAwareUpdate('', updates);
+    await queueAwareUserUpdate(updates);
   }
 
   // --- Fees ---
@@ -319,16 +323,16 @@ export class TransportDataService {
     const updates: Record<string, unknown> = {};
 
     existing.filter((record) => record.date === date).forEach((record) => {
-      updates[userDocumentPath(COLLECTIONS.ATTENDANCE, record.id)] = null;
+      updates[`${COLLECTIONS.ATTENDANCE}/${record.id}`] = null;
     });
 
     Object.entries(attendanceMap).forEach(([studentId, status]) => {
       const attendanceId = push(ref(rtdb, userCollectionPath(COLLECTIONS.ATTENDANCE))).key;
       if (!attendanceId) return;
-      updates[userDocumentPath(COLLECTIONS.ATTENDANCE, attendanceId)] = { studentId, date, status };
+      updates[`${COLLECTIONS.ATTENDANCE}/${attendanceId}`] = { studentId, date, status };
     });
 
-    await queueAwareUpdate('', updates);
+    await queueAwareUserUpdate(updates);
   }
 
   static async deleteAttendance(id: string): Promise<void> {

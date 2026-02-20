@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { browserLocalPersistence, onAuthStateChanged, setPersistence, signInAnonymously } from 'firebase/auth';
+import { browserLocalPersistence, onAuthStateChanged, setPersistence, signInAnonymously, signInWithPopup } from 'firebase/auth';
 import Layout from './components/Layout';
 import Dashboard from './components/Dashboard';
 import StudentView from './components/StudentView';
@@ -10,7 +10,7 @@ import DailyLogView from './components/DailyLogView';
 import DestinationView from './components/DestinationView';
 import { ViewType } from './types';
 import { runLocalStorageMigration } from './services/migration';
-import { auth } from './services/firebase';
+import { auth, googleProvider } from './services/firebase';
 import { canAccessView } from './services/accessControl';
 import { TransportDataService } from './services/dataService';
 
@@ -18,6 +18,15 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.DASHBOARD);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isTryingGoogle, setIsTryingGoogle] = useState(false);
+
+  const formatAuthError = (error: unknown, fallback: string) => {
+    if (error && typeof error === 'object' && 'code' in error) {
+      const code = String((error as { code: string }).code);
+      return `${fallback} (${code})`;
+    }
+    return fallback;
+  };
 
   const signInSilently = async () => {
     setAuthError(null);
@@ -25,10 +34,25 @@ const App: React.FC = () => {
       await setPersistence(auth, browserLocalPersistence);
       await signInAnonymously(auth);
     } catch (error) {
-      setAuthError('Failed to initialize anonymous session. Enable Anonymous provider in Firebase Auth.');
+      setAuthError(formatAuthError(error, 'Failed to initialize anonymous session.'));
       // eslint-disable-next-line no-console
       console.error('Anonymous sign-in error', error);
       setAuthReady(true);
+    }
+  };
+
+  const signInWithGoogleFallback = async () => {
+    setIsTryingGoogle(true);
+    setAuthError(null);
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      setAuthError(formatAuthError(error, 'Google sign-in failed.'));
+      // eslint-disable-next-line no-console
+      console.error('Google fallback sign-in error', error);
+    } finally {
+      setIsTryingGoogle(false);
     }
   };
 
@@ -129,6 +153,14 @@ const App: React.FC = () => {
             className="mt-5 w-full rounded-lg bg-indigo-600 px-4 py-2 text-white font-semibold hover:bg-indigo-700"
           >
             Retry Connection
+          </button>
+          <button
+            type="button"
+            onClick={signInWithGoogleFallback}
+            disabled={isTryingGoogle}
+            className="mt-3 w-full rounded-lg bg-slate-800 px-4 py-2 text-white font-semibold hover:bg-black disabled:opacity-60"
+          >
+            {isTryingGoogle ? 'Opening Google...' : 'Continue with Google'}
           </button>
         </div>
       </div>

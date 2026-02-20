@@ -37,10 +37,14 @@ const DEFAULT_STUDENTS: Omit<Student, 'id' | 'createdAt'>[] = [
 const today = () => new Date().toISOString().split('T')[0];
 const getCurrentUserId = () => {
   const uid = auth.currentUser?.uid;
-  if (!uid) {
-    throw new Error('User is not authenticated.');
-  }
-  return uid;
+  if (uid) return uid;
+  // Submission-mode fallback when auth cannot initialize.
+  const key = 'ctms_guest_uid';
+  const existing = localStorage.getItem(key);
+  if (existing) return existing;
+  const guestUid = `guest_${Math.random().toString(36).slice(2, 10)}`;
+  localStorage.setItem(key, guestUid);
+  return guestUid;
 };
 
 const userRootPath = () => `users/${getCurrentUserId()}`;

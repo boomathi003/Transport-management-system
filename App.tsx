@@ -19,6 +19,7 @@ const App: React.FC = () => {
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isTryingGoogle, setIsTryingGoogle] = useState(false);
+  const [guestMode, setGuestMode] = useState(false);
 
   const formatAuthError = (error: unknown, fallback: string) => {
     if (error && typeof error === 'object' && 'code' in error) {
@@ -136,7 +137,7 @@ const App: React.FC = () => {
     );
   }
 
-  if (!auth.currentUser) {
+  if (!auth.currentUser && !guestMode) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
         <div className="bg-white rounded-2xl shadow-md p-6 w-full max-w-md text-center">
@@ -161,6 +162,17 @@ const App: React.FC = () => {
             className="mt-3 w-full rounded-lg bg-slate-800 px-4 py-2 text-white font-semibold hover:bg-black disabled:opacity-60"
           >
             {isTryingGoogle ? 'Opening Google...' : 'Continue with Google'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setAuthError('Running in guest mode for demo submission.');
+              setGuestMode(true);
+              setAuthReady(true);
+            }}
+            className="mt-3 w-full rounded-lg bg-amber-500 px-4 py-2 text-white font-semibold hover:bg-amber-600"
+          >
+            Continue in Guest Mode
           </button>
         </div>
       </div>

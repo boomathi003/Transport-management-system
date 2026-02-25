@@ -39,8 +39,9 @@ export interface VehicleRecord {
   // 1. Basic Details
   busNumber: string;
   driverName: string;
-   staffName?: string; // new
+  staffName?: string;
   driverContact: string;
+  assignedStudentIds?: string[];
 
   // 2. Document & Expiry Details
   insuranceDate: string;

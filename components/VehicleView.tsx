@@ -1,26 +1,39 @@
 
 import React, { useState, useEffect } from 'react';
-import { VehicleRecord } from '../types';
+import { VehicleRecord, Student, FeesRecord, DestinationRecord } from '../types';
 import { TransportDataService } from '../services/dataService';
 import { 
-  Plus, X, Save, Truck, Droplets, 
-  Gauge, Settings, User, 
-  Edit2, Trash2, CheckCircle, FileText,
+  Plus, X, Save, Truck,
+  Settings,
+  Edit2, Trash2, CheckCircle,
   AlertTriangle, Calendar, Activity, 
-  ChevronRight, ArrowRight, Phone,
-  Disc, MapPin, Wind, Hammer,
-  CircleDot, Beaker, ClipboardCheck
+  ArrowRight, Phone,
+  Disc, Wind, Hammer,
+  CircleDot, Beaker, ClipboardCheck, Users, CreditCard, Route
 } from 'lucide-react';
 
 const VehicleView: React.FC = () => {
   const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [fees, setFees] = useState<FeesRecord[]>([]);
+  const [destinations, setDestinations] = useState<DestinationRecord[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedBus, setSelectedBus] = useState<VehicleRecord | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [isCreatingStudent, setIsCreatingStudent] = useState(false);
   const [activeTab, setActiveTab] = useState<number>(1);
+  const [newStudentData, setNewStudentData] = useState({
+    name: '',
+    registrationNumber: '',
+    seriesNumber: '',
+    department: '',
+    academicYear: ''
+  });
 
   const [formData, setFormData] = useState<Omit<VehicleRecord, 'id' | 'createdAt'>>({
     busNumber: '', driverName: '', staffName: '', driverContact: '',
+    assignedStudentIds: [],
     insuranceDate: '', insuranceDueDate: '',
     fcDate: '', fcDueDate: '',
     pollutionDate: '', pollutionDueDate: '',
@@ -38,13 +51,52 @@ const VehicleView: React.FC = () => {
     kmCalculation: 0, stack: '', usage: ''
   });
 
-  const loadVehicles = async () => {
-    const data = await TransportDataService.getVehicles();
-    setVehicles(data);
+  const normalizeRef = (value?: string) => (value ?? '').trim().toLowerCase();
+
+  const loadData = async () => {
+    const [vehicleData, studentData, feeData, destinationData] = await Promise.all([
+      TransportDataService.getVehicles(),
+      TransportDataService.getStudents(),
+      TransportDataService.getFees(),
+      TransportDataService.getAllDestinations()
+    ]);
+
+    let hasAutoSyncUpdates = false;
+    await Promise.all(
+      vehicleData.map(async (vehicle) => {
+        const stackRef = normalizeRef(vehicle.stack);
+        if (!stackRef) return;
+
+        const matchedStudentIds = destinationData
+          .filter((destination) => normalizeRef(destination.routeName) === stackRef)
+          .map((destination) => destination.studentId);
+
+        if (!matchedStudentIds.length) return;
+
+        const existingIds = vehicle.assignedStudentIds ?? [];
+        const nextIds = Array.from(new Set([...existingIds, ...matchedStudentIds]));
+        const changed =
+          nextIds.length !== existingIds.length || nextIds.some((id) => !existingIds.includes(id));
+
+        if (!changed) return;
+
+        hasAutoSyncUpdates = true;
+        await TransportDataService.updateVehicle(vehicle.id, { assignedStudentIds: nextIds });
+      })
+    );
+
+    const latestVehicles = hasAutoSyncUpdates
+      ? await TransportDataService.getVehicles()
+      : vehicleData;
+
+    setVehicles(latestVehicles);
+    setStudents(studentData);
+    setFees(feeData);
+    setDestinations(destinationData);
   };
 
   useEffect(() => {
-    loadVehicles();
+    loadData();
   }, []);
 
   // Automatic KM Calculation logic: KM Reading - Previous KM
@@ -56,14 +108,28 @@ const VehicleView: React.FC = () => {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.busNumber) return alert("Bus Number is required!");
+
+    const stackRef = normalizeRef(formData.stack);
+    const routeMatchedStudentIds = stackRef
+      ? destinations
+          .filter((destination) => normalizeRef(destination.routeName) === stackRef)
+          .map((destination) => destination.studentId)
+      : [];
+
+    const payload: Omit<VehicleRecord, 'id' | 'createdAt'> = {
+      ...formData,
+      assignedStudentIds: Array.from(
+        new Set([...(formData.assignedStudentIds ?? []), ...routeMatchedStudentIds])
+      )
+    };
     
     if (editingId) {
-      await TransportDataService.updateVehicle(editingId, formData);
+      await TransportDataService.updateVehicle(editingId, payload);
     } else {
-      await TransportDataService.addVehicle(formData);
+      await TransportDataService.addVehicle(payload);
     }
     
-    await loadVehicles();
+    await loadData();
     closeModal();
     setShowConfirmation(true);
     setTimeout(() => setShowConfirmation(false), 3000);
@@ -71,7 +137,10 @@ const VehicleView: React.FC = () => {
 
   const openEditModal = (vehicle: VehicleRecord) => {
     setEditingId(vehicle.id);
-    setFormData({ ...vehicle });
+    setFormData({
+      ...vehicle,
+      assignedStudentIds: vehicle.assignedStudentIds ?? []
+    });
     setIsModalOpen(true);
   };
 
@@ -79,8 +148,17 @@ const VehicleView: React.FC = () => {
     setIsModalOpen(false);
     setEditingId(null);
     setActiveTab(1);
+    setIsCreatingStudent(false);
+    setNewStudentData({
+      name: '',
+      registrationNumber: '',
+      seriesNumber: '',
+      department: '',
+      academicYear: ''
+    });
     setFormData({
       busNumber: '', driverName: '', staffName: '', driverContact: '',
+      assignedStudentIds: [],
       insuranceDate: '', insuranceDueDate: '',
       fcDate: '', fcDueDate: '',
       pollutionDate: '', pollutionDueDate: '',
@@ -102,8 +180,86 @@ const VehicleView: React.FC = () => {
   const handleDelete = async (id: string) => {
     if (window.confirm("Confirm: Delete vehicle profile from master SQL?")) {
       await TransportDataService.deleteVehicle(id);
-      loadVehicles();
+      loadData();
     }
+  };
+
+  const handleCreateAndAssignStudent = async () => {
+    if (!newStudentData.name || !newStudentData.registrationNumber || !newStudentData.seriesNumber) {
+      alert('Name, Registration Number and Series Number are required.');
+      return;
+    }
+
+    const createdId = await TransportDataService.addStudent({
+      name: newStudentData.name,
+      registrationNumber: newStudentData.registrationNumber,
+      seriesNumber: newStudentData.seriesNumber,
+      department: newStudentData.department || 'General',
+      academicYear: newStudentData.academicYear || '1st Year'
+    });
+
+    if (!createdId) {
+      alert('Unable to create student now. Please try again.');
+      return;
+    }
+
+    await loadData();
+    setFormData((prev) => ({
+      ...prev,
+      assignedStudentIds: Array.from(new Set([...(prev.assignedStudentIds ?? []), createdId]))
+    }));
+    setNewStudentData({
+      name: '',
+      registrationNumber: '',
+      seriesNumber: '',
+      department: '',
+      academicYear: ''
+    });
+    setIsCreatingStudent(false);
+  };
+
+  const toggleStudentAssignment = (studentId: string) => {
+    const selected = formData.assignedStudentIds ?? [];
+    const next = selected.includes(studentId)
+      ? selected.filter((id) => id !== studentId)
+      : [...selected, studentId];
+    setFormData({ ...formData, assignedStudentIds: next });
+  };
+
+  const getAssignedStudents = (vehicle: VehicleRecord) => {
+    const ids = vehicle.assignedStudentIds ?? [];
+    return students.filter((student) => ids.includes(student.id));
+  };
+
+  const getStudentRoute = (studentId: string) => {
+    return destinations.find((destination) => destination.studentId === studentId);
+  };
+
+  const getLatestTransportFee = (studentId: string) => {
+    return fees
+      .filter((fee) => fee.studentId === studentId && fee.feeType === 'Transport')
+      .sort((a, b) => {
+        const aDate = new Date(a.feeDate || a.createdAt).getTime();
+        const bDate = new Date(b.feeDate || b.createdAt).getTime();
+        return bDate - aDate;
+      })[0];
+  };
+
+  const getBusFeeSummary = (vehicle: VehicleRecord) => {
+    const assigned = getAssignedStudents(vehicle);
+    const stats = assigned.map((student) => {
+      const fee = getLatestTransportFee(student.id);
+      const pending = fee ? Math.max(fee.totalAmount - fee.paidAmount, 0) : 0;
+      return {
+        paid: fee ? fee.status === 'Paid' : false,
+        pending
+      };
+    });
+
+    const paidCount = stats.filter((item) => item.paid).length;
+    const notPaidCount = assigned.length - paidCount;
+    const pendingAmount = stats.reduce((sum, item) => sum + item.pending, 0);
+    return { paidCount, notPaidCount, pendingAmount, totalStudents: assigned.length };
   };
 
   const isExpired = (dueDate: string) => {
@@ -180,14 +336,8 @@ const VehicleView: React.FC = () => {
                   </div>
                   <div>
                     <h3 className="text-2xl font-black uppercase tracking-tighter leading-none">{v.busNumber}</h3>
-                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mt-1">
-  Driver: {v.driverName}
-</p>
-<p className="text-[10px] font-black uppercase tracking-widest opacity-60 mt-1">
-  Staff: {v.staffName || 'N/A'}
-</p>
-
                     <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mt-1">Driver: {v.driverName}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mt-1">Staff: {v.staffName || 'N/A'}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -229,6 +379,21 @@ const VehicleView: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
+                  <div className="bg-indigo-50 p-4 rounded-2xl border border-indigo-100 text-center">
+                    <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-1">Students</p>
+                    <p className="text-lg font-black text-indigo-700">{getBusFeeSummary(v).totalStudents}</p>
+                  </div>
+                  <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 text-center">
+                    <p className="text-[8px] font-black text-emerald-400 uppercase tracking-widest mb-1">Paid</p>
+                    <p className="text-lg font-black text-emerald-700">{getBusFeeSummary(v).paidCount}</p>
+                  </div>
+                  <div className="bg-rose-50 p-4 rounded-2xl border border-rose-100 text-center">
+                    <p className="text-[8px] font-black text-rose-400 uppercase tracking-widest mb-1">Not Paid</p>
+                    <p className="text-lg font-black text-rose-700">{getBusFeeSummary(v).notPaidCount}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
                    <div className="bg-slate-50/50 p-4 rounded-2xl text-center border border-slate-50">
                       <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Tyre Log</p>
                       <p className="text-[10px] font-black text-slate-600 truncate">{v.tyre1Number || 'N/A'}</p>
@@ -248,7 +413,12 @@ const VehicleView: React.FC = () => {
                       <Calendar size={14} className="text-slate-300" />
                       <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest">Unit Registered: {v.createdAt}</span>
                    </div>
-                   <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest px-3 py-1 bg-indigo-50 rounded-full">Manual Entry</span>
+                   <button
+                     onClick={() => setSelectedBus(v)}
+                     className="text-[9px] font-black text-indigo-500 uppercase tracking-widest px-4 py-2 bg-indigo-50 rounded-full hover:bg-indigo-100 transition-colors"
+                   >
+                     View Bus Detail
+                   </button>
                 </div>
               </div>
 
@@ -331,6 +501,101 @@ const VehicleView: React.FC = () => {
                     <div className="space-y-3 md:col-span-2">
                       <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] px-6">Driver Contact Number</label>
                       <input required type="text" placeholder="+91 XXXXX XXXXX" className="w-full px-8 py-6 bg-slate-50 border-2 border-slate-100 rounded-[2.5rem] font-black text-xl text-slate-700 focus:border-indigo-600 outline-none transition-all" value={formData.driverContact} onChange={e => setFormData({...formData, driverContact: e.target.value})} />
+                    </div>
+
+                    <div className="space-y-4 md:col-span-2 bg-indigo-50/40 border border-indigo-100 rounded-[2rem] p-5">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.2em]">Add New Student And Auto-Assign</p>
+                        <button
+                          type="button"
+                          onClick={() => setIsCreatingStudent((prev) => !prev)}
+                          className="px-4 py-2 rounded-xl bg-white border border-indigo-100 text-[10px] font-black uppercase tracking-widest text-indigo-600"
+                        >
+                          {isCreatingStudent ? 'Close' : 'Create Student'}
+                        </button>
+                      </div>
+
+                      {isCreatingStudent && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <input
+                            type="text"
+                            placeholder="Student Name *"
+                            className="w-full px-5 py-4 bg-white border border-indigo-100 rounded-2xl font-bold text-sm"
+                            value={newStudentData.name}
+                            onChange={(e) => setNewStudentData({ ...newStudentData, name: e.target.value })}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Registration No *"
+                            className="w-full px-5 py-4 bg-white border border-indigo-100 rounded-2xl font-bold text-sm"
+                            value={newStudentData.registrationNumber}
+                            onChange={(e) => setNewStudentData({ ...newStudentData, registrationNumber: e.target.value })}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Series No *"
+                            className="w-full px-5 py-4 bg-white border border-indigo-100 rounded-2xl font-bold text-sm"
+                            value={newStudentData.seriesNumber}
+                            onChange={(e) => setNewStudentData({ ...newStudentData, seriesNumber: e.target.value })}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Department"
+                            className="w-full px-5 py-4 bg-white border border-indigo-100 rounded-2xl font-bold text-sm"
+                            value={newStudentData.department}
+                            onChange={(e) => setNewStudentData({ ...newStudentData, department: e.target.value })}
+                          />
+                          <input
+                            type="text"
+                            placeholder="Academic Year"
+                            className="w-full px-5 py-4 bg-white border border-indigo-100 rounded-2xl font-bold text-sm md:col-span-2"
+                            value={newStudentData.academicYear}
+                            onChange={(e) => setNewStudentData({ ...newStudentData, academicYear: e.target.value })}
+                          />
+                          <button
+                            type="button"
+                            onClick={handleCreateAndAssignStudent}
+                            className="md:col-span-2 px-6 py-4 bg-indigo-600 text-white rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-indigo-700"
+                          >
+                            Save Student + Assign To This Bus
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-4 md:col-span-2">
+                      <div className="flex items-center justify-between px-2">
+                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Assign Students</label>
+                        <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">
+                          {(formData.assignedStudentIds ?? []).length} Selected
+                        </span>
+                      </div>
+                      <div className="max-h-56 overflow-y-auto rounded-[2rem] border-2 border-slate-100 bg-slate-50 p-4 space-y-2">
+                        {students.length > 0 ? students.map((student) => {
+                          const isSelected = (formData.assignedStudentIds ?? []).includes(student.id);
+                          return (
+                            <button
+                              key={student.id}
+                              type="button"
+                              onClick={() => toggleStudentAssignment(student.id)}
+                              className={`w-full text-left p-4 rounded-2xl border transition-all ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white border-indigo-600'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-200'
+                              }`}
+                            >
+                              <p className="text-xs font-black uppercase tracking-tight">{student.name}</p>
+                              <p className={`text-[10px] font-black uppercase tracking-widest ${isSelected ? 'text-indigo-100' : 'text-slate-400'}`}>
+                                {student.registrationNumber}
+                              </p>
+                            </button>
+                          );
+                        }) : (
+                          <p className="text-center text-xs font-black text-slate-400 uppercase tracking-widest p-4">
+                            No students found
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -504,6 +769,93 @@ const VehicleView: React.FC = () => {
                    {editingId ? 'Update Master Record' : 'Commit Final Registration'}
                  </button>
                )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedBus && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-[110] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-6xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-10 py-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/70">
+              <div>
+                <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight">{selectedBus.busNumber} Bus Detail</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-2">
+                  Staff: {selectedBus.staffName || 'N/A'} | Driver: {selectedBus.driverName}
+                </p>
+              </div>
+              <button onClick={() => setSelectedBus(null)} className="text-slate-300 hover:text-slate-700">
+                <X size={36} />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-6 overflow-y-auto">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-indigo-50 rounded-2xl p-5 border border-indigo-100">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-indigo-400 mb-2">Total Students</p>
+                  <p className="text-2xl font-black text-indigo-700">{getBusFeeSummary(selectedBus).totalStudents}</p>
+                </div>
+                <div className="bg-emerald-50 rounded-2xl p-5 border border-emerald-100">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-emerald-400 mb-2">Paid Students</p>
+                  <p className="text-2xl font-black text-emerald-700">{getBusFeeSummary(selectedBus).paidCount}</p>
+                </div>
+                <div className="bg-rose-50 rounded-2xl p-5 border border-rose-100">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-rose-400 mb-2">Not Paid</p>
+                  <p className="text-2xl font-black text-rose-700">{getBusFeeSummary(selectedBus).notPaidCount}</p>
+                </div>
+                <div className="bg-amber-50 rounded-2xl p-5 border border-amber-100">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-amber-400 mb-2">Pending Fees</p>
+                  <p className="text-2xl font-black text-amber-700">
+                    ₹{getBusFeeSummary(selectedBus).pendingAmount.toLocaleString('en-IN')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="border border-slate-100 rounded-[2rem] overflow-hidden">
+                <div className="grid grid-cols-12 bg-slate-50 px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  <div className="col-span-3 flex items-center gap-2"><Users size={14} /> Student</div>
+                  <div className="col-span-3 flex items-center gap-2"><Route size={14} /> Bus Route</div>
+                  <div className="col-span-2 flex items-center gap-2"><CreditCard size={14} /> Total Fee</div>
+                  <div className="col-span-2">Pending</div>
+                  <div className="col-span-2">Status</div>
+                </div>
+
+                {getAssignedStudents(selectedBus).length > 0 ? getAssignedStudents(selectedBus).map((student) => {
+                  const route = getStudentRoute(student.id);
+                  const fee = getLatestTransportFee(student.id);
+                  const pending = fee ? Math.max(fee.totalAmount - fee.paidAmount, 0) : 0;
+                  return (
+                    <div key={student.id} className="grid grid-cols-12 px-6 py-4 border-t border-slate-50 items-center text-sm">
+                      <div className="col-span-3">
+                        <p className="font-black text-slate-800">{student.name}</p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{student.registrationNumber}</p>
+                      </div>
+                      <div className="col-span-3 text-slate-600 font-bold">
+                        {route ? `${route.routeName} (${route.pickupPoint} - ${route.dropPoint})` : 'Route not assigned'}
+                      </div>
+                      <div className="col-span-2 font-black text-slate-700">
+                        {fee ? `₹${fee.totalAmount.toLocaleString('en-IN')}` : 'N/A'}
+                      </div>
+                      <div className="col-span-2 font-black text-rose-600">
+                        {fee ? `₹${pending.toLocaleString('en-IN')}` : 'N/A'}
+                      </div>
+                      <div className="col-span-2">
+                        <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${
+                          fee?.status === 'Paid'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-rose-100 text-rose-700'
+                        }`}>
+                          {fee ? fee.status : 'No Fee'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                }) : (
+                  <div className="p-10 text-center text-slate-400 font-black uppercase tracking-widest text-xs">
+                    No students assigned to this bus.
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

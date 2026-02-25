@@ -262,10 +262,11 @@ export class TransportDataService {
     return students;
   }
 
-  static async addStudent(data: Omit<Student, 'id' | 'createdAt'>): Promise<void> {
+  static async addStudent(data: Omit<Student, 'id' | 'createdAt'>): Promise<string | null> {
     const studentRef = push(ref(rtdb, userCollectionPath(COLLECTIONS.STUDENTS)));
-    if (!studentRef.key) return;
+    if (!studentRef.key) return null;
     await queueAwareSet(`${userCollectionPath(COLLECTIONS.STUDENTS)}/${studentRef.key}`, { ...data, createdAt: today() });
+    return studentRef.key;
   }
 
   static async updateStudent(id: string, updatesData: Partial<Student>): Promise<void> {

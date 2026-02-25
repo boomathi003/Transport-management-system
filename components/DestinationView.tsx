@@ -41,6 +41,8 @@ const DestinationView: React.FC = () => {
     distance: 0
   });
 
+  const normalizeRef = (value?: string) => (value ?? '').trim().toLowerCase();
+
   const loadData = async () => {
     const [studentData, destData] = await Promise.all([
       TransportDataService.getStudents(),
@@ -78,6 +80,21 @@ const DestinationView: React.FC = () => {
       studentId: editingStudentId, 
       ...formData 
     });
+
+    const routeRef = normalizeRef(formData.routeName);
+    if (routeRef) {
+      const vehicles = await TransportDataService.getVehicles();
+      await Promise.all(
+        vehicles.map(async (vehicle) => {
+          if (normalizeRef(vehicle.stack) !== routeRef) return;
+          const currentIds = vehicle.assignedStudentIds ?? [];
+          if (currentIds.includes(editingStudentId)) return;
+          await TransportDataService.updateVehicle(vehicle.id, {
+            assignedStudentIds: [...currentIds, editingStudentId]
+          });
+        })
+      );
+    }
 
     setStatusMessage({ type: 'success', text: 'Route path updated.' });
     
@@ -255,7 +272,7 @@ const DestinationView: React.FC = () => {
       {/* Enhanced Assignment Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[3.5rem] shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200 relative">
+          <div className="bg-white rounded-[3.5rem] shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200 relative max-h-[90vh] flex flex-col">
             
             <div className="px-10 py-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <div className="flex items-center gap-5">
@@ -272,7 +289,7 @@ const DestinationView: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSave} className="p-10 space-y-6">
+            <form onSubmit={handleSave} className="p-10 space-y-6 overflow-y-auto">
               
               {statusMessage && (
                 <div className="p-5 rounded-3xl bg-emerald-50 text-emerald-700 flex items-center gap-4 animate-in fade-in slide-in-from-top-4">

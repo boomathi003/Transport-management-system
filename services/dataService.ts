@@ -35,16 +35,13 @@ const DEFAULT_STUDENTS: Omit<Student, 'id' | 'createdAt'>[] = [
 ];
 
 const today = () => new Date().toISOString().split('T')[0];
+const SHARED_PUBLIC_UID = 'public_transport_workspace';
 const getCurrentUserId = () => {
-  const uid = auth.currentUser?.uid;
-  if (uid) return uid;
-  // Submission-mode fallback when auth cannot initialize.
-  const key = 'ctms_guest_uid';
-  const existing = localStorage.getItem(key);
-  if (existing) return existing;
-  const guestUid = `guest_${Math.random().toString(36).slice(2, 10)}`;
-  localStorage.setItem(key, guestUid);
-  return guestUid;
+  const user = auth.currentUser;
+  // Keep signed-in (non-anonymous) accounts isolated.
+  if (user?.uid && !user.isAnonymous) return user.uid;
+  // Anonymous/guest sessions share one common workspace across devices.
+  return SHARED_PUBLIC_UID;
 };
 
 const userRootPath = () => `users/${getCurrentUserId()}`;

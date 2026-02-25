@@ -19,7 +19,7 @@ const App: React.FC = () => {
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [isTryingGoogle, setIsTryingGoogle] = useState(false);
-  const [guestMode, setGuestMode] = useState(false);
+  const [guestMode] = useState(true);
 
   const formatAuthError = (error: unknown, fallback: string) => {
     if (error && typeof error === 'object' && 'code' in error) {

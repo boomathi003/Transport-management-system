@@ -27,8 +27,6 @@ const COLLECTIONS = {
   DESTINATIONS: 'destinations'
 } as const;
 const PLACEHOLDER_KEY = '__placeholder';
-const LEGACY_SOURCE_UID = 'C57qtqjzufeuSkdXsIhUxm0vdHi2';
-const LEGACY_FIXED_UID_MIGRATION_KEY = `ctms_fixed_uid_migrated_${LEGACY_SOURCE_UID}`;
 
 const today = () => new Date().toISOString().split('T')[0];
 const SHARED_PUBLIC_UID = 'public_transport_workspace';
@@ -188,37 +186,6 @@ const migrateLegacyUserDataToSharedWorkspace = async () => {
   localStorage.setItem(migrationKey, '1');
 };
 
-const migrateSpecificLegacyUidToSharedWorkspace = async () => {
-  if (localStorage.getItem(LEGACY_FIXED_UID_MIGRATION_KEY) === '1') return;
-
-  const collections = Object.values(COLLECTIONS);
-  const updates: Record<string, unknown> = {};
-
-  for (const collection of collections) {
-    const [legacySnapshot, sharedSnapshot] = await Promise.all([
-      get(child(ref(rtdb), `users/${LEGACY_SOURCE_UID}/${collection}`)),
-      get(child(ref(rtdb), `users/${SHARED_PUBLIC_UID}/${collection}`))
-    ]);
-
-    if (!legacySnapshot.exists()) continue;
-
-    const legacyData = (legacySnapshot.val() as Record<string, unknown>) ?? {};
-    const sharedData = (sharedSnapshot.val() as Record<string, unknown>) ?? {};
-
-    Object.entries(legacyData).forEach(([id, value]) => {
-      if (id === PLACEHOLDER_KEY) return;
-      if (sharedData[id] !== undefined) return;
-      updates[`${collection}/${id}`] = value;
-    });
-  }
-
-  if (Object.keys(updates).length > 0) {
-    await queueAwareUpdate(`users/${SHARED_PUBLIC_UID}`, updates);
-  }
-
-  localStorage.setItem(LEGACY_FIXED_UID_MIGRATION_KEY, '1');
-};
-
 const getCollectionArray = async <T>(collection: string): Promise<Array<T & { id: string }>> => {
   try {
     const data = await getCollectionMap<T>(collection);
@@ -233,7 +200,6 @@ const getCollectionArray = async <T>(collection: string): Promise<Array<T & { id
 };
 
 const ensureCollectionsInitialized = async () => {
-  await migrateSpecificLegacyUidToSharedWorkspace();
   await migrateLegacyUserDataToSharedWorkspace();
 
   const paths = [

@@ -23,8 +23,10 @@ const STORAGE_KEYS = {
   VEHICLES: 'ctms_vehicles',
   ATTENTION: 'ctms_attention',
   DESTINATIONS: 'ctms_destinations',
-  MIGRATED: 'ctms_firestore_migrated'
+  MIGRATED: 'ctms_firestore_migrated_v2'
 } as const;
+const CACHE_KEY_PREFIX = 'ctms_cache_';
+const CACHE_MIGRATION_KEY = 'ctms_cache_to_shared_migrated_v2';
 const getCurrentUserId = () => (auth.currentUser ? SHARED_PUBLIC_UID : null);
 const userRootPath = (uid: string) => `users/${uid}`;
 const userCollectionPath = (uid: string, collection: string) => `${userRootPath(uid)}/${collection}`;
@@ -41,6 +43,18 @@ const readLocal = <T>(key: string): T[] => {
   } catch {
     return [];
   }
+};
+
+const readLegacyCacheCollection = <T>(collection: string): T[] => {
+  const all: T[] = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (!key) continue;
+    if (!key.startsWith(CACHE_KEY_PREFIX)) continue;
+    if (!key.endsWith(`_${collection}`)) continue;
+    all.push(...readLocal<T>(key));
+  }
+  return all;
 };
 
 const collectionHasDocs = async (uid: string, name: string) => {
@@ -100,6 +114,8 @@ export const runLocalStorageMigration = async () => {
 
   if (localStorage.getItem(migrationKey) === 'true') return;
 
+  const shouldImportLegacyCache = localStorage.getItem(CACHE_MIGRATION_KEY) !== 'true';
+
   const [students, attendance, fees, vehicles, attention, destinations] = [
     readLocal<Student>(STORAGE_KEYS.STUDENTS),
     readLocal<AttendanceRecord>(STORAGE_KEYS.ATTENDANCE),
@@ -109,78 +125,77 @@ export const runLocalStorageMigration = async () => {
     readLocal<DestinationRecord>(STORAGE_KEYS.DESTINATIONS)
   ];
 
-  const migrations: Array<Promise<void>> = [];
+  const mergeMissingById = async <T extends { id?: string }>(
+    collection: string,
+    records: T[]
+  ) => {
+    if (records.length === 0) return;
+    const snapshot = await get(child(ref(rtdb), userCollectionPath(uid, collection)));
+    const existing = snapshot.exists()
+      ? (snapshot.val() as Record<string, unknown>)
+      : {};
+    const updates: Record<string, unknown> = {};
 
-  if (students.length > 0) {
-    migrations.push((async () => {
-      if (await collectionHasDocs(uid, 'students')) return;
-      const updates: Record<string, unknown> = {};
-      students.forEach((student) => {
-        const { id, ...rest } = student;
-        updates[`${userCollectionPath(uid, 'students')}/${id}`] = rest;
-      });
-      await update(ref(rtdb), updates);
-    })());
-  }
+    records.forEach((raw) => {
+      const record = raw as Record<string, unknown> & { id?: string };
+      const recordId = record.id;
+      if (!recordId || recordId === PLACEHOLDER_KEY) return;
+      if (existing[recordId] !== undefined) return;
+      const { id, ...rest } = record;
+      updates[`${userCollectionPath(uid, collection)}/${recordId}`] = rest;
+    });
 
-  if (attendance.length > 0) {
-    migrations.push((async () => {
-      if (await collectionHasDocs(uid, 'attendance')) return;
-      const updates: Record<string, unknown> = {};
-      attendance.forEach((record) => {
-        const { id, ...rest } = record;
-        updates[`${userCollectionPath(uid, 'attendance')}/${id}`] = rest;
-      });
+    if (Object.keys(updates).length > 0) {
       await update(ref(rtdb), updates);
-    })());
-  }
+    }
+  };
 
-  if (fees.length > 0) {
-    migrations.push((async () => {
-      if (await collectionHasDocs(uid, 'fees')) return;
-      const updates: Record<string, unknown> = {};
-      fees.forEach((fee) => {
-        const { id, ...rest } = fee;
-        updates[`${userCollectionPath(uid, 'fees')}/${id}`] = rest;
-      });
-      await update(ref(rtdb), updates);
-    })());
-  }
+  const mergeMissingDestinations = async (records: DestinationRecord[]) => {
+    if (records.length === 0) return;
+    const snapshot = await get(child(ref(rtdb), userCollectionPath(uid, 'destinations')));
+    const existing = snapshot.exists()
+      ? (snapshot.val() as Record<string, unknown>)
+      : {};
+    const updates: Record<string, DestinationRecord> = {};
 
-  if (vehicles.length > 0) {
-    migrations.push((async () => {
-      if (await collectionHasDocs(uid, 'vehicles')) return;
-      const updates: Record<string, unknown> = {};
-      vehicles.forEach((vehicle) => {
-        const { id, ...rest } = vehicle;
-        updates[`${userCollectionPath(uid, 'vehicles')}/${id}`] = rest;
-      });
-      await update(ref(rtdb), updates);
-    })());
-  }
+    records.forEach((destination) => {
+      if (!destination.studentId) return;
+      if (existing[destination.studentId] !== undefined) return;
+      updates[`${userCollectionPath(uid, 'destinations')}/${destination.studentId}`] = destination;
+    });
 
-  if (attention.length > 0) {
-    migrations.push((async () => {
-      if (await collectionHasDocs(uid, 'attention')) return;
-      const updates: Record<string, unknown> = {};
-      attention.forEach((message) => {
-        const { id, ...rest } = message;
-        updates[`${userCollectionPath(uid, 'attention')}/${id}`] = rest;
-      });
+    if (Object.keys(updates).length > 0) {
       await update(ref(rtdb), updates);
-    })());
-  }
+    }
+  };
 
-  if (destinations.length > 0) {
-    migrations.push((async () => {
-      if (await collectionHasDocs(uid, 'destinations')) return;
-      const updates: Record<string, DestinationRecord> = {};
-      destinations.forEach((destination) => {
-        updates[`${userCollectionPath(uid, 'destinations')}/${destination.studentId}`] = destination;
-      });
-      await update(ref(rtdb), updates);
-    })());
-  }
+  const localStudents = shouldImportLegacyCache
+    ? [...students, ...readLegacyCacheCollection<Student>('students')]
+    : students;
+  const localAttendance = shouldImportLegacyCache
+    ? [...attendance, ...readLegacyCacheCollection<AttendanceRecord>('attendance')]
+    : attendance;
+  const localFees = shouldImportLegacyCache
+    ? [...fees, ...readLegacyCacheCollection<FeesRecord>('fees')]
+    : fees;
+  const localVehicles = shouldImportLegacyCache
+    ? [...vehicles, ...readLegacyCacheCollection<VehicleRecord>('vehicles')]
+    : vehicles;
+  const localAttention = shouldImportLegacyCache
+    ? [...attention, ...readLegacyCacheCollection<AttentionMessage>('attention')]
+    : attention;
+  const localDestinations = shouldImportLegacyCache
+    ? [...destinations, ...readLegacyCacheCollection<DestinationRecord>('destinations')]
+    : destinations;
+
+  const migrations: Array<Promise<void>> = [
+    mergeMissingById('students', localStudents),
+    mergeMissingById('attendance', localAttendance),
+    mergeMissingById('fees', localFees),
+    mergeMissingById('vehicles', localVehicles),
+    mergeMissingById('attention', localAttention),
+    mergeMissingDestinations(localDestinations)
+  ];
 
   if (migrations.length === 0) {
     localStorage.setItem(migrationKey, 'true');
@@ -188,5 +203,8 @@ export const runLocalStorageMigration = async () => {
   }
 
   await Promise.all(migrations);
+  if (shouldImportLegacyCache) {
+    localStorage.setItem(CACHE_MIGRATION_KEY, 'true');
+  }
   localStorage.setItem(migrationKey, 'true');
 };

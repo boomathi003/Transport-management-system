@@ -37,6 +37,7 @@ const DEFAULT_STUDENTS: Omit<Student, 'id' | 'createdAt'>[] = [
 const today = () => new Date().toISOString().split('T')[0];
 const SHARED_PUBLIC_UID = 'public_transport_workspace';
 const legacyMigrationKey = (uid: string) => `ctms_anon_shared_migrated_${uid}`;
+const globalMigrationKey = 'ctms_global_shared_migrated_v1';
 const getCurrentUserId = () => {
   // All sessions (Google + anonymous) use one shared workspace.
   return SHARED_PUBLIC_UID;
@@ -192,6 +193,41 @@ const migrateLegacyUserDataToSharedWorkspace = async () => {
   localStorage.setItem(migrationKey, '1');
 };
 
+const migrateAllLegacyUsersToSharedWorkspace = async () => {
+  if (localStorage.getItem(globalMigrationKey) === '1') return;
+
+  const usersSnapshot = await get(child(ref(rtdb), 'users'));
+  if (!usersSnapshot.exists()) {
+    localStorage.setItem(globalMigrationKey, '1');
+    return;
+  }
+
+  const usersData = (usersSnapshot.val() as Record<string, Record<string, Record<string, unknown>>>) ?? {};
+  const sharedData = usersData[SHARED_PUBLIC_UID] ?? {};
+  const updates: Record<string, unknown> = {};
+
+  Object.entries(usersData).forEach(([uid, collections]) => {
+    if (uid === SHARED_PUBLIC_UID || !collections || typeof collections !== 'object') return;
+
+    Object.entries(collections).forEach(([collection, documents]) => {
+      if (!documents || typeof documents !== 'object') return;
+
+      const sharedCollection = (sharedData[collection] as Record<string, unknown> | undefined) ?? {};
+      Object.entries(documents).forEach(([id, value]) => {
+        if (id === PLACEHOLDER_KEY) return;
+        if (sharedCollection[id] !== undefined) return;
+        updates[`${collection}/${id}`] = value;
+      });
+    });
+  });
+
+  if (Object.keys(updates).length > 0) {
+    await queueAwareUpdate(`users/${SHARED_PUBLIC_UID}`, updates);
+  }
+
+  localStorage.setItem(globalMigrationKey, '1');
+};
+
 const getCollectionArray = async <T>(collection: string): Promise<Array<T & { id: string }>> => {
   try {
     const data = await getCollectionMap<T>(collection);
@@ -206,6 +242,11 @@ const getCollectionArray = async <T>(collection: string): Promise<Array<T & { id
 };
 
 const ensureCollectionsInitialized = async () => {
+  try {
+    await migrateAllLegacyUsersToSharedWorkspace();
+  } catch {
+    // Global migration may fail under restricted rules; continue with regular startup.
+  }
   await migrateLegacyUserDataToSharedWorkspace();
 
   const paths = [

@@ -27,17 +27,12 @@ const COLLECTIONS = {
   DESTINATIONS: 'destinations'
 } as const;
 const PLACEHOLDER_KEY = '__placeholder';
-
-const DEFAULT_STUDENTS: Omit<Student, 'id' | 'createdAt'>[] = [
-  { name: 'Sathish Kumar R', registrationNumber: '2322k1443', seriesNumber: 'S-001', department: 'Computer Science', academicYear: '3rd Year / 5th Sem' },
-  { name: 'Karthikeyan M', registrationNumber: '2322k1417', seriesNumber: 'S-002', department: 'Computer Science', academicYear: '2nd Year / 3rd Sem' },
-  { name: 'Abdul Kalam J', registrationNumber: '2322k1398', seriesNumber: 'S-003', department: 'Computer Science', academicYear: '4th Year / 7th Sem' }
-];
+const LEGACY_SOURCE_UID = 'C57qtqjzufeuSkdXsIhUxm0vdHi2';
+const LEGACY_FIXED_UID_MIGRATION_KEY = `ctms_fixed_uid_migrated_${LEGACY_SOURCE_UID}`;
 
 const today = () => new Date().toISOString().split('T')[0];
 const SHARED_PUBLIC_UID = 'public_transport_workspace';
 const legacyMigrationKey = (uid: string) => `ctms_anon_shared_migrated_${uid}`;
-const globalMigrationKey = 'ctms_global_shared_migrated_v1';
 const getCurrentUserId = () => {
   // All sessions (Google + anonymous) use one shared workspace.
   return SHARED_PUBLIC_UID;
@@ -193,39 +188,35 @@ const migrateLegacyUserDataToSharedWorkspace = async () => {
   localStorage.setItem(migrationKey, '1');
 };
 
-const migrateAllLegacyUsersToSharedWorkspace = async () => {
-  if (localStorage.getItem(globalMigrationKey) === '1') return;
+const migrateSpecificLegacyUidToSharedWorkspace = async () => {
+  if (localStorage.getItem(LEGACY_FIXED_UID_MIGRATION_KEY) === '1') return;
 
-  const usersSnapshot = await get(child(ref(rtdb), 'users'));
-  if (!usersSnapshot.exists()) {
-    localStorage.setItem(globalMigrationKey, '1');
-    return;
-  }
-
-  const usersData = (usersSnapshot.val() as Record<string, Record<string, Record<string, unknown>>>) ?? {};
-  const sharedData = usersData[SHARED_PUBLIC_UID] ?? {};
+  const collections = Object.values(COLLECTIONS);
   const updates: Record<string, unknown> = {};
 
-  Object.entries(usersData).forEach(([uid, collections]) => {
-    if (uid === SHARED_PUBLIC_UID || !collections || typeof collections !== 'object') return;
+  for (const collection of collections) {
+    const [legacySnapshot, sharedSnapshot] = await Promise.all([
+      get(child(ref(rtdb), `users/${LEGACY_SOURCE_UID}/${collection}`)),
+      get(child(ref(rtdb), `users/${SHARED_PUBLIC_UID}/${collection}`))
+    ]);
 
-    Object.entries(collections).forEach(([collection, documents]) => {
-      if (!documents || typeof documents !== 'object') return;
+    if (!legacySnapshot.exists()) continue;
 
-      const sharedCollection = (sharedData[collection] as Record<string, unknown> | undefined) ?? {};
-      Object.entries(documents).forEach(([id, value]) => {
-        if (id === PLACEHOLDER_KEY) return;
-        if (sharedCollection[id] !== undefined) return;
-        updates[`${collection}/${id}`] = value;
-      });
+    const legacyData = (legacySnapshot.val() as Record<string, unknown>) ?? {};
+    const sharedData = (sharedSnapshot.val() as Record<string, unknown>) ?? {};
+
+    Object.entries(legacyData).forEach(([id, value]) => {
+      if (id === PLACEHOLDER_KEY) return;
+      if (sharedData[id] !== undefined) return;
+      updates[`${collection}/${id}`] = value;
     });
-  });
+  }
 
   if (Object.keys(updates).length > 0) {
     await queueAwareUpdate(`users/${SHARED_PUBLIC_UID}`, updates);
   }
 
-  localStorage.setItem(globalMigrationKey, '1');
+  localStorage.setItem(LEGACY_FIXED_UID_MIGRATION_KEY, '1');
 };
 
 const getCollectionArray = async <T>(collection: string): Promise<Array<T & { id: string }>> => {
@@ -242,11 +233,7 @@ const getCollectionArray = async <T>(collection: string): Promise<Array<T & { id
 };
 
 const ensureCollectionsInitialized = async () => {
-  try {
-    await migrateAllLegacyUsersToSharedWorkspace();
-  } catch {
-    // Global migration may fail under restricted rules; continue with regular startup.
-  }
+  await migrateSpecificLegacyUidToSharedWorkspace();
   await migrateLegacyUserDataToSharedWorkspace();
 
   const paths = [
@@ -307,35 +294,6 @@ export class TransportDataService {
       // Ignore init failure (offline / temporary network issues).
     }
     const students = await getCollectionArray<Omit<Student, 'id'>>(COLLECTIONS.STUDENTS);
-
-    if (students.length === 0) {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        return [];
-      }
-
-      const updates: Record<string, unknown> = {};
-
-      DEFAULT_STUDENTS.forEach((student) => {
-        const studentId = push(ref(rtdb, userCollectionPath(COLLECTIONS.STUDENTS))).key;
-        if (!studentId) return;
-
-        updates[`${COLLECTIONS.STUDENTS}/${studentId}`] = { ...student, createdAt: today() };
-        const destination: DestinationRecord = {
-          studentId,
-          pickupPoint: 'Pollachi',
-          dropPoint: 'Poosaripatti',
-          routeName: 'ROUTE-01',
-          distance: 14
-        };
-        updates[`${COLLECTIONS.DESTINATIONS}/${studentId}`] = destination;
-      });
-
-      if (Object.keys(updates).length > 0) {
-        await queueAwareUserUpdate(updates);
-      }
-
-      return this.getStudents();
-    }
 
     return students;
   }

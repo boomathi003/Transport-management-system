@@ -38,7 +38,6 @@ const App: React.FC = () => {
       setAuthError(formatAuthError(error, 'Failed to initialize anonymous session.'));
       // eslint-disable-next-line no-console
       console.error('Anonymous sign-in error', error);
-      setAuthReady(true);
     }
   };
 
@@ -59,9 +58,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
     let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-      setAuthReady(true);
       if (!auth.currentUser) {
         setAuthError('Connection timed out. Please retry.');
+        void signInSilently();
       }
     }, 10000);
 
@@ -73,6 +72,7 @@ const App: React.FC = () => {
 
       try {
         await runLocalStorageMigration();
+        await TransportDataService.initializeWorkspace();
         await TransportDataService.flushOfflineQueue();
       } catch (error) {
         // eslint-disable-next-line no-console

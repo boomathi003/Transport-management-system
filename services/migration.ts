@@ -14,6 +14,7 @@ import {
 } from '../types';
 import { auth, rtdb } from './firebase';
 const PLACEHOLDER_KEY = '__placeholder';
+const SHARED_PUBLIC_UID = 'public_transport_workspace';
 
 const STORAGE_KEYS = {
   STUDENTS: 'ctms_students',
@@ -24,7 +25,7 @@ const STORAGE_KEYS = {
   DESTINATIONS: 'ctms_destinations',
   MIGRATED: 'ctms_firestore_migrated'
 } as const;
-const getCurrentUserId = () => auth.currentUser?.uid ?? null;
+const getCurrentUserId = () => (auth.currentUser ? SHARED_PUBLIC_UID : null);
 const userRootPath = (uid: string) => `users/${uid}`;
 const userCollectionPath = (uid: string, collection: string) => `${userRootPath(uid)}/${collection}`;
 const getMigrationKey = (uid: string) => `${STORAGE_KEYS.MIGRATED}_${uid}`;

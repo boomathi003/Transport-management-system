@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { Student, AttendanceStatus } from '../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { Student, AttendanceStatus, VehicleRecord } from '../types';
 import { TransportDataService } from '../services/dataService';
 import { 
   CheckCircle2, 
@@ -21,19 +21,22 @@ import {
 
 const AttendanceView: React.FC = () => {
   const [students, setStudents] = useState<Student[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [localAttendance, setLocalAttendance] = useState<Record<string, AttendanceStatus>>({});
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const autoSaveTimeoutRef = useRef<number | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
   const isPastDate = selectedDate < today;
 
   const loadData = async () => {
-    const [studentList, allAttendance] = await Promise.all([
+    const [studentList, allAttendance, vehicleList] = await Promise.all([
       TransportDataService.getStudents(),
-      TransportDataService.getAllAttendance()
+      TransportDataService.getAllAttendance(),
+      TransportDataService.getVehicles()
     ]);
     const dateAttendance = allAttendance.filter(r => r.date === selectedDate);
     
@@ -43,6 +46,7 @@ const AttendanceView: React.FC = () => {
     });
 
     setStudents(studentList);
+    setVehicles(vehicleList);
     setLocalAttendance(attendanceMap);
     setHasChanges(false);
   };
@@ -51,8 +55,22 @@ const AttendanceView: React.FC = () => {
     loadData();
   }, [selectedDate]);
 
+  const scheduleAutoSave = (nextMap: Record<string, AttendanceStatus>) => {
+    if (autoSaveTimeoutRef.current) {
+      window.clearTimeout(autoSaveTimeoutRef.current);
+    }
+    autoSaveTimeoutRef.current = window.setTimeout(async () => {
+      await TransportDataService.saveAttendanceBatch(selectedDate, nextMap);
+      setHasChanges(false);
+    }, 400);
+  };
+
   const handleStatusChange = (studentId: string, status: AttendanceStatus) => {
-    setLocalAttendance(prev => ({ ...prev, [studentId]: status }));
+    setLocalAttendance(prev => {
+      const nextMap = { ...prev, [studentId]: status };
+      scheduleAutoSave(nextMap);
+      return nextMap;
+    });
     setHasChanges(true);
   };
 
@@ -64,6 +82,7 @@ const AttendanceView: React.FC = () => {
     });
     setLocalAttendance(newMap);
     setHasChanges(true);
+    scheduleAutoSave(newMap);
     setTimeout(() => setIsUpdatingAll(false), 400);
   };
 
@@ -76,8 +95,10 @@ const AttendanceView: React.FC = () => {
 
   const clearRecordsForDate = () => {
     if (window.confirm("Clear all logs for this date?")) {
-      setLocalAttendance({});
+      const cleared: Record<string, AttendanceStatus> = {};
+      setLocalAttendance(cleared);
       setHasChanges(true);
+      scheduleAutoSave(cleared);
     }
   };
 
@@ -93,6 +114,74 @@ const AttendanceView: React.FC = () => {
   const presentCount = Object.values(localAttendance).filter(v => v === 'Present').length;
   const totalCount = students.length;
   const attendancePercentage = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
+  const assignedIds = new Set(vehicles.flatMap(v => v.assignedStudentIds ?? []));
+  const unassignedStudents = students.filter(s => !assignedIds.has(s.id));
+  const studentById = new Map(students.map(s => [s.id, s]));
+
+  const renderStudentRows = (list: Student[]) => (
+    list.map(student => {
+      const status = localAttendance[student.id];
+      return (
+        <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
+          <td className="px-10 py-6">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black text-xs">
+                {student.name.charAt(0)}
+              </div>
+              <div>
+                <div className="font-black text-slate-800 text-sm leading-tight uppercase">{student.name}</div>
+                <div className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-widest">{student.registrationNumber}</div>
+              </div>
+            </div>
+          </td>
+          <td className="px-10 py-6">
+            {status ? (
+              <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                status === 'Present' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+              }`}>
+                {status === 'Present' ? <CheckCircle2 size={12}/> : <XCircle size={12}/>}
+                {status}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-slate-300 text-[9px] font-black uppercase tracking-widest animate-pulse">
+                <Clock size={12} /> Not Verified
+              </div>
+            )}
+          </td>
+          <td className="px-10 py-6">
+            <div className="flex justify-center items-center gap-3">
+              <button 
+                onClick={() => handleStatusChange(student.id, 'Present')}
+                className={`p-3 rounded-2xl transition-all ${
+                  status === 'Present' ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-50 text-slate-300 hover:text-emerald-600'
+                }`}
+              >
+                <CheckCircle2 size={20} />
+              </button>
+              <button 
+                onClick={() => handleStatusChange(student.id, 'Absent')}
+                className={`p-3 rounded-2xl transition-all ${
+                  status === 'Absent' ? 'bg-rose-600 text-white shadow-lg' : 'bg-slate-50 text-slate-300 hover:text-rose-600'
+                }`}
+              >
+                <XCircle size={20} />
+              </button>
+            </div>
+          </td>
+        </tr>
+      );
+    })
+  );
+
+  const updateBusStatus = (list: Student[], status: AttendanceStatus) => {
+    const nextMap: Record<string, AttendanceStatus> = { ...localAttendance };
+    list.forEach(student => {
+      nextMap[student.id] = status;
+    });
+    setLocalAttendance(nextMap);
+    setHasChanges(true);
+    scheduleAutoSave(nextMap);
+  };
 
   return (
     <div className="space-y-6 pb-12">
@@ -198,72 +287,91 @@ const AttendanceView: React.FC = () => {
         </div>
       </div>
 
-      <div className="bg-white rounded-[3rem] shadow-sm border border-slate-50 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50/50 border-b border-slate-100 text-slate-400 text-[9px] uppercase font-black tracking-[0.2em]">
-              <tr>
-                <th className="px-10 py-6">Student Information</th>
-                <th className="px-10 py-6">Verification</th>
-                <th className="px-10 py-6 text-center">Set Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {students.map(student => {
-                const status = localAttendance[student.id];
-                return (
-                  <tr key={student.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-10 py-6">
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-black text-xs">
-                          {student.name.charAt(0)}
-                        </div>
-                        <div>
-                          <div className="font-black text-slate-800 text-sm leading-tight uppercase">{student.name}</div>
-                          <div className="text-[9px] font-bold text-slate-400 mt-1 uppercase tracking-widest">{student.registrationNumber}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-10 py-6">
-                      {status ? (
-                        <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                          status === 'Present' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
-                        }`}>
-                          {status === 'Present' ? <CheckCircle2 size={12}/> : <XCircle size={12}/>}
-                          {status}
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 text-slate-300 text-[9px] font-black uppercase tracking-widest animate-pulse">
-                          <Clock size={12} /> Not Verified
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-10 py-6">
-                      <div className="flex justify-center items-center gap-3">
-                        <button 
-                          onClick={() => handleStatusChange(student.id, 'Present')}
-                          className={`p-3 rounded-2xl transition-all ${
-                            status === 'Present' ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-50 text-slate-300 hover:text-emerald-600'
-                          }`}
-                        >
-                          <CheckCircle2 size={20} />
-                        </button>
-                        <button 
-                          onClick={() => handleStatusChange(student.id, 'Absent')}
-                          className={`p-3 rounded-2xl transition-all ${
-                            status === 'Absent' ? 'bg-rose-600 text-white shadow-lg' : 'bg-slate-50 text-slate-300 hover:text-rose-600'
-                          }`}
-                        >
-                          <XCircle size={20} />
-                        </button>
-                      </div>
-                    </td>
+      <div className="space-y-6">
+        {vehicles.map(vehicle => {
+          const list = (vehicle.assignedStudentIds ?? [])
+            .map(id => studentById.get(id))
+            .filter((s): s is Student => !!s);
+          return (
+            <div key={vehicle.id} className="bg-white rounded-[3rem] shadow-sm border border-slate-50 overflow-hidden">
+              <div className="px-8 py-6 border-b border-slate-100 bg-slate-50/60 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Bus</p>
+                  <h3 className="text-xl font-black text-slate-800">{vehicle.busNumber}</h3>
+                </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => updateBusStatus(list, 'Present')}
+                    className="px-4 py-2 rounded-2xl bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest shadow-sm"
+                  >
+                    Auto-Fill Present
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateBusStatus(list, 'Absent')}
+                    className="px-4 py-2 rounded-2xl bg-rose-600 text-white text-[10px] font-black uppercase tracking-widest shadow-sm"
+                  >
+                    Auto-Fill Absent
+                  </button>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Students</p>
+                  <p className="text-lg font-black text-slate-700">{list.length}</p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50/50 border-b border-slate-100 text-slate-400 text-[9px] uppercase font-black tracking-[0.2em]">
+                    <tr>
+                      <th className="px-10 py-6">Student Information</th>
+                      <th className="px-10 py-6">Verification</th>
+                      <th className="px-10 py-6 text-center">Set Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {list.length > 0 ? renderStudentRows(list) : (
+                      <tr>
+                        <td colSpan={3} className="px-10 py-10 text-center text-slate-400 font-bold">
+                          No students assigned to this bus.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+
+        {unassignedStudents.length > 0 && (
+          <div className="bg-white rounded-[3rem] shadow-sm border border-slate-50 overflow-hidden">
+            <div className="px-8 py-6 border-b border-slate-100 bg-rose-50/60 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Unassigned</p>
+                <h3 className="text-xl font-black text-rose-700">No Bus Assigned</h3>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Students</p>
+                <p className="text-lg font-black text-rose-700">{unassignedStudents.length}</p>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50/50 border-b border-slate-100 text-slate-400 text-[9px] uppercase font-black tracking-[0.2em]">
+                  <tr>
+                    <th className="px-10 py-6">Student Information</th>
+                    <th className="px-10 py-6">Verification</th>
+                    <th className="px-10 py-6 text-center">Set Status</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {renderStudentRows(unassignedStudents)}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

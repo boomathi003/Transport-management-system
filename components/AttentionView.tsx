@@ -6,6 +6,7 @@ import { Plus, X, Save, Megaphone, Trash2, Edit2, AlertCircle, Clock, CheckCircl
 
 const AttentionView: React.FC = () => {
   const [messages, setMessages] = useState<AttentionMessage[]>([]);
+  
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { TransportDataService } from '../services/dataService';
 import { Student, FeesRecord, VehicleRecord, ViewType, AttendanceRecord } from '../types';
+import { canAccessView } from '../services/accessControl';
 import { ShieldAlert, CreditCard, Truck, Users, ArrowRight, Bell, CalendarClock, AlertTriangle, CheckCircle2, Search } from 'lucide-react';
 
 interface DashboardProps {
@@ -9,6 +10,7 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
+  const canViewFees = canAccessView(ViewType.FEES);
   const [students, setStudents] = useState<Student[]>([]);
   const [fees, setFees] = useState<FeesRecord[]>([]);
   const [vehicles, setVehicles] = useState<VehicleRecord[]>([]);
@@ -20,7 +22,7 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
     const load = async () => {
       const [studentData, feeData, vehicleData, attendanceData] = await Promise.all([
         TransportDataService.getStudents(),
-        TransportDataService.getFees(),
+        canViewFees ? TransportDataService.getFees() : Promise.resolve([]),
         TransportDataService.getVehicles(),
         TransportDataService.getAllAttendance()
       ]);
@@ -34,7 +36,7 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [canViewFees]);
 
   const todayStr = new Date().toISOString().split('T')[0];
   const today = new Date();
@@ -102,14 +104,14 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
         </div>
         <div className="p-3 bg-white rounded-2xl shadow-sm border border-slate-200 text-indigo-600 relative cursor-pointer hover:bg-slate-50 transition-colors">
            <Bell size={24} />
-           {(overdueFees.length > 0 || upcomingAlerts.length > 0) && (
+           {((canViewFees && overdueFees.length > 0) || upcomingAlerts.length > 0) && (
              <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-500 rounded-full border-2 border-white animate-pulse"></span>
            )}
         </div>
       </div>
 
       {/* Critical Fee Alerts Banner */}
-      {overdueFees.length > 0 && (
+      {canViewFees && overdueFees.length > 0 && (
         <div className="bg-rose-50 border-l-4 border-rose-500 p-6 rounded-r-[2rem] shadow-sm flex items-start gap-4 animate-in slide-in-from-top-4">
           <ShieldAlert className="text-rose-500 shrink-0" size={32} />
           <div>
@@ -138,14 +140,16 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
           <h3 className="text-5xl font-black tracking-tighter">{students.length}</h3>
         </div>
         
-        <div 
-          onClick={() => setView(ViewType.FEES)}
-          className="bg-emerald-600 p-8 rounded-[2.5rem] text-white shadow-xl shadow-emerald-100 cursor-pointer hover:scale-[1.02] transition-transform active:scale-100"
-        >
-          <CreditCard size={32} className="mb-4 opacity-50" />
-          <p className="text-emerald-100 font-black uppercase tracking-widest text-[10px]">Fee Records</p>
-          <h3 className="text-5xl font-black tracking-tighter">{fees.length}</h3>
-        </div>
+        {canViewFees && (
+          <div 
+            onClick={() => setView(ViewType.FEES)}
+            className="bg-emerald-600 p-8 rounded-[2.5rem] text-white shadow-xl shadow-emerald-100 cursor-pointer hover:scale-[1.02] transition-transform active:scale-100"
+          >
+            <CreditCard size={32} className="mb-4 opacity-50" />
+            <p className="text-emerald-100 font-black uppercase tracking-widest text-[10px]">Fee Records</p>
+            <h3 className="text-5xl font-black tracking-tighter">{fees.length}</h3>
+          </div>
+        )}
 
         <div 
           onClick={() => setView(ViewType.MAINTENANCE)}
@@ -273,21 +277,23 @@ const Dashboard: React.FC<DashboardProps> = ({ setView }) => {
             <ArrowRight className="text-slate-200 group-hover:text-indigo-600 transition-colors" size={24} />
           </button>
 
-          <button 
-            onClick={() => setView(ViewType.FEES)}
-            className="bg-white p-8 rounded-[3rem] border-2 border-slate-50 flex items-center justify-between group hover:border-emerald-500 transition-all shadow-sm active:scale-[0.98] text-left"
-          >
-            <div className="flex items-center gap-6">
-              <div className="bg-emerald-50 p-5 rounded-[1.5rem] text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-all shadow-inner">
-                <CreditCard size={28} />
+          {canViewFees && (
+            <button 
+              onClick={() => setView(ViewType.FEES)}
+              className="bg-white p-8 rounded-[3rem] border-2 border-slate-50 flex items-center justify-between group hover:border-emerald-500 transition-all shadow-sm active:scale-[0.98] text-left"
+            >
+              <div className="flex items-center gap-6">
+                <div className="bg-emerald-50 p-5 rounded-[1.5rem] text-emerald-600 group-hover:bg-emerald-600 group-hover:text-white transition-all shadow-inner">
+                  <CreditCard size={28} />
+                </div>
+                <div>
+                  <p className="font-black text-slate-800 text-xl uppercase tracking-tighter">Fee Collection</p>
+                  <p className="text-slate-400 text-xs font-medium mt-1 uppercase tracking-widest">Track transport revenue logs</p>
+                </div>
               </div>
-              <div>
-                <p className="font-black text-slate-800 text-xl uppercase tracking-tighter">Fee Collection</p>
-                <p className="text-slate-400 text-xs font-medium mt-1 uppercase tracking-widest">Track transport revenue logs</p>
-              </div>
-            </div>
-            <ArrowRight className="text-slate-200 group-hover:text-emerald-600 transition-colors" size={24} />
-          </button>
+              <ArrowRight className="text-slate-200 group-hover:text-emerald-600 transition-colors" size={24} />
+            </button>
+          )}
         </div>
       </div>
     </div>

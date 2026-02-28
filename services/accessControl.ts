@@ -1,22 +1,12 @@
-import { auth } from './firebase';
 import { ViewType } from '../types';
 
-export type UserRole = 'admin' | 'staff';
-
-const getAdminEmails = () => {
-  const raw = (import.meta.env.VITE_ADMIN_EMAILS ?? '') as string;
-  return raw
-    .split(',')
-    .map((email) => email.trim().toLowerCase())
-    .filter(Boolean);
-};
+export type UserRole = 'user';
 
 export const getUserRole = (): UserRole => {
-  const currentEmail = auth.currentUser?.email?.toLowerCase() ?? '';
-  const admins = getAdminEmails();
-  return admins.includes(currentEmail) ? 'admin' : 'staff';
+  return 'user';
 };
 
 export const canAccessView = (view: ViewType): boolean => {
+  void view;
   return true;
 };

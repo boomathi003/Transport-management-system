@@ -3,6 +3,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Student, FeesRecord, FeeType, PaymentStatus, DestinationRecord } from '../types';
 import { FeesApi, StudentApi } from '../services/api';
 import { TransportDataService } from '../services/dataService';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import {
   Plus, X, Save, Search, CheckCircle,
   Clock, Edit2, Trash2, IndianRupee,
@@ -293,6 +295,50 @@ const FeesView: React.FC = () => {
     return matchesDate && matchesSearch;
   });
 
+  const studentFeeStatus = students.map((student) => {
+    const records = fees
+      .filter((fee) => fee.studentId === student.id)
+      .sort((a, b) => {
+        const dateDiff = new Date(b.feeDate).getTime() - new Date(a.feeDate).getTime();
+        if (dateDiff !== 0) return dateDiff;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+    const latest = records[0];
+
+    if (!latest || latest.totalAmount === 0) {
+      return { student, status: 'Not Paid', fee: latest };
+    }
+
+    if (latest.paidAmount >= latest.totalAmount) {
+      return { student, status: 'Paid', fee: latest };
+    }
+
+    if (latest.paidAmount > 0) {
+      return { student, status: 'Pending', fee: latest };
+    }
+
+    return { student, status: 'Not Paid', fee: latest };
+  });
+
+  const filteredStudentStatus = studentFeeStatus.filter(({ student }) => {
+    const query = searchQuery.toLowerCase();
+    if (!query) return true;
+    return (
+      student.name.toLowerCase().includes(query) ||
+      student.registrationNumber.toLowerCase().includes(query)
+    );
+  });
+
+  const statusCounts = studentFeeStatus.reduce(
+    (acc, curr) => {
+      if (curr.status === 'Paid') acc.paid += 1;
+      if (curr.status === 'Pending') acc.pending += 1;
+      if (curr.status === 'Not Paid') acc.notPaid += 1;
+      return acc;
+    },
+    { paid: 0, pending: 0, notPaid: 0 }
+  );
+
   const dateTotalReceived = filteredFees.reduce((acc, curr) => acc + curr.paidAmount, 0);
   const dateTotalPending = filteredFees.reduce((acc, curr) => acc + (curr.totalAmount - curr.paidAmount), 0);
   const pendingCalc = formData.totalAmount - formData.paidAmount;
@@ -306,6 +352,44 @@ const FeesView: React.FC = () => {
     return { label: d.toLocaleString('en-US', { month: 'short' }), total };
   });
   const maxTrend = Math.max(...monthlyFeeTrend.map((item) => item.total), 1);
+  const statusPillClasses: Record<string, string> = {
+    Paid: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    Pending: 'bg-amber-100 text-amber-700 border-amber-200',
+    'Not Paid': 'bg-rose-100 text-rose-700 border-rose-200'
+  };
+  const statusKeys = ['Paid', 'Pending', 'Not Paid'] as const;
+
+  const exportStatusPdf = (status: typeof statusKeys[number]) => {
+    const list = filteredStudentStatus.filter((item) => item.status === status);
+    const doc = new jsPDF();
+    doc.setFontSize(16);
+    doc.text(`Student Fees - ${status}`, 14, 18);
+    doc.setFontSize(10);
+    doc.text('All Dates (Latest Record per Student)', 14, 24);
+
+    const rows = list.map(({ student, fee }) => {
+      const paid = fee?.paidAmount ?? 0;
+      const total = fee?.totalAmount ?? 0;
+      return [
+        student.name,
+        student.registrationNumber,
+        student.department,
+        `Rs ${paid.toLocaleString('en-IN')}`,
+        `Rs ${total.toLocaleString('en-IN')}`
+      ];
+    });
+
+    autoTable(doc, {
+      head: [['Student Name', 'Reg No.', 'Department', 'Paid', 'Total']],
+      body: rows.length ? rows : [['No students', '-', '-', '-', '-']],
+      startY: 30,
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [30, 41, 59] }
+    });
+
+    const fileName = `students-${status.toLowerCase().replace(' ', '-')}.pdf`;
+    doc.save(fileName);
+  };
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -504,7 +588,6 @@ const FeesView: React.FC = () => {
               Today
             </button>
           </div>
-
           <button
             onClick={handleLogout}
             className="px-4 py-3 rounded-2xl bg-slate-800 text-white text-xs font-black uppercase tracking-widest whitespace-nowrap"
@@ -571,6 +654,86 @@ const FeesView: React.FC = () => {
           Create Fee Entry
         </button>
       </div>
+
+      <section className="bg-white rounded-[3rem] border border-slate-100 p-6 shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
+          <div>
+            <h3 className="font-black text-slate-800 uppercase tracking-wider text-sm">Student Fee Status</h3>
+            <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">All Dates (Latest Record per Student)</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${statusPillClasses.Paid}`}>
+              Paid {statusCounts.paid}
+            </span>
+            <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${statusPillClasses.Pending}`}>
+              Pending {statusCounts.pending}
+            </span>
+            <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${statusPillClasses['Not Paid']}`}>
+              Not Paid {statusCounts.notPaid}
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-3 mb-6">
+          <button
+            type="button"
+            onClick={() => exportStatusPdf('Paid')}
+            className="px-4 py-2 rounded-2xl bg-emerald-600 text-white text-[11px] font-black uppercase tracking-widest shadow-sm"
+          >
+            Download Paid PDF
+          </button>
+          <button
+            type="button"
+            onClick={() => exportStatusPdf('Pending')}
+            className="px-4 py-2 rounded-2xl bg-amber-600 text-white text-[11px] font-black uppercase tracking-widest shadow-sm"
+          >
+            Download Pending PDF
+          </button>
+          <button
+            type="button"
+            onClick={() => exportStatusPdf('Not Paid')}
+            className="px-4 py-2 rounded-2xl bg-rose-600 text-white text-[11px] font-black uppercase tracking-widest shadow-sm"
+          >
+            Download Not Paid PDF
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {statusKeys.map((status) => {
+            const list = filteredStudentStatus.filter((item) => item.status === status);
+            return (
+              <div key={status} className="bg-slate-50/60 border border-slate-100 rounded-3xl p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="text-xs font-black uppercase tracking-widest text-slate-600">{status}</h4>
+                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border ${statusPillClasses[status]}`}>
+                    {list.length}
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  {list.length > 0 ? list.map(({ student, fee }) => {
+                    const paid = fee?.paidAmount ?? 0;
+                    const total = fee?.totalAmount ?? 0;
+                    return (
+                      <div key={student.id} className="bg-white border border-slate-100 rounded-2xl px-4 py-3">
+                        <div className="font-black text-slate-800">{student.name}</div>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                          {student.department} • {student.registrationNumber}
+                        </div>
+                        <div className="text-[11px] font-black text-slate-700 mt-2">
+                          ₹{paid.toLocaleString('en-IN')} / ₹{total.toLocaleString('en-IN')}
+                        </div>
+                      </div>
+                    );
+                  }) : (
+                    <div className="py-6 text-center text-slate-400 font-bold text-sm">
+                      No students
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredFees.length > 0 ? filteredFees.map(fee => {

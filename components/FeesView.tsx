@@ -295,6 +295,42 @@ const FeesView: React.FC = () => {
     return matchesDate && matchesSearch;
   });
 
+  const normalizeDepartment = (value?: string) => value?.trim().toLowerCase() || 'unknown';
+
+  const filteredFeesByDepartment = filteredFees.reduce<Record<string, { label: string; items: FeesRecord[] }>>((acc, fee) => {
+    const student = students.find(s => s.id === fee.studentId);
+    const rawDepartment = student?.department?.trim();
+    const key = normalizeDepartment(rawDepartment);
+    if (!acc[key]) {
+      acc[key] = { label: rawDepartment || 'Unknown', items: [] };
+    }
+    acc[key].items.push(fee);
+    return acc;
+  }, {});
+
+  const filteredFeesDepartmentKeys = Object.keys(filteredFeesByDepartment).sort((a, b) => a.localeCompare(b));
+
+  const departmentSummary = filteredFees.reduce<Record<string, { label: string; total: number; paid: number; pending: number; count: number }>>(
+    (acc, fee) => {
+      const student = students.find(s => s.id === fee.studentId);
+      const rawDepartment = student?.department?.trim();
+      const key = normalizeDepartment(rawDepartment);
+      if (!acc[key]) {
+        acc[key] = { label: rawDepartment || 'Unknown', total: 0, paid: 0, pending: 0, count: 0 };
+      }
+      acc[key].total += fee.totalAmount;
+      acc[key].paid += fee.paidAmount;
+      acc[key].pending += fee.totalAmount - fee.paidAmount;
+      acc[key].count += 1;
+      return acc;
+    },
+    {}
+  );
+
+  const departmentSummaryList = Object.entries(departmentSummary)
+    .map(([, summary]) => summary)
+    .sort((a, b) => b.total - a.total);
+
   const studentFeeStatus = students.map((student) => {
     const records = fees
       .filter((fee) => fee.studentId === student.id)
@@ -358,6 +394,15 @@ const FeesView: React.FC = () => {
     'Not Paid': 'bg-rose-100 text-rose-700 border-rose-200'
   };
   const statusKeys = ['Paid', 'Pending', 'Not Paid'] as const;
+
+  const groupByDepartment = (list: typeof filteredStudentStatus) =>
+    list.reduce<Record<string, { label: string; items: typeof filteredStudentStatus }>>((acc, item) => {
+      const rawDepartment = item.student.department?.trim();
+      const key = normalizeDepartment(rawDepartment);
+      if (!acc[key]) acc[key] = { label: rawDepartment || 'Unknown', items: [] };
+      acc[key].items.push(item);
+      return acc;
+    }, {});
 
   const exportStatusPdf = (status: typeof statusKeys[number]) => {
     const list = filteredStudentStatus.filter((item) => item.status === status);
@@ -656,6 +701,50 @@ const FeesView: React.FC = () => {
       </div>
 
       <section className="bg-white rounded-[3rem] border border-slate-100 p-6 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <div>
+            <h3 className="font-black text-slate-800 uppercase tracking-wider text-sm">Department Wise Summary</h3>
+            <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Filtered by {selectedDate}</p>
+          </div>
+          <div className="text-xs font-black uppercase tracking-widest text-slate-500">
+            Departments: {departmentSummaryList.length || 0}
+          </div>
+        </div>
+        {departmentSummaryList.length ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {departmentSummaryList.map((dept) => (
+              <div key={dept.department} className="bg-slate-50 border border-slate-100 rounded-3xl p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider">{dept.department}</h4>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                    {dept.count} records
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-white rounded-2xl p-3 border border-slate-100">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1">Total</p>
+                    <p className="text-xs font-black text-slate-700">Rs {dept.total.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div className="bg-emerald-50/70 rounded-2xl p-3 border border-emerald-100">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-emerald-500 mb-1">Paid</p>
+                    <p className="text-xs font-black text-emerald-700">Rs {dept.paid.toLocaleString('en-IN')}</p>
+                  </div>
+                  <div className="bg-rose-50/70 rounded-2xl p-3 border border-rose-100">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-rose-500 mb-1">Pending</p>
+                    <p className="text-xs font-black text-rose-700">Rs {dept.pending.toLocaleString('en-IN')}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="py-10 text-center text-slate-400 font-bold text-sm">
+            No department data available for the selected date.
+          </div>
+        )}
+      </section>
+
+      <section className="bg-white rounded-[3rem] border border-slate-100 p-6 shadow-sm">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
           <div>
             <h3 className="font-black text-slate-800 uppercase tracking-wider text-sm">Student Fee Status</h3>
@@ -700,6 +789,8 @@ const FeesView: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {statusKeys.map((status) => {
             const list = filteredStudentStatus.filter((item) => item.status === status);
+            const grouped = groupByDepartment(list);
+            const departmentKeys = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
             return (
               <div key={status} className="bg-slate-50/60 border border-slate-100 rounded-3xl p-4">
                 <div className="flex items-center justify-between mb-4">
@@ -709,21 +800,33 @@ const FeesView: React.FC = () => {
                   </span>
                 </div>
                 <div className="space-y-3">
-                  {list.length > 0 ? list.map(({ student, fee }) => {
-                    const paid = fee?.paidAmount ?? 0;
-                    const total = fee?.totalAmount ?? 0;
-                    return (
-                      <div key={student.id} className="bg-white border border-slate-100 rounded-2xl px-4 py-3">
-                        <div className="font-black text-slate-800">{student.name}</div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                          {student.department} • {student.registrationNumber}
-                        </div>
-                        <div className="text-[11px] font-black text-slate-700 mt-2">
-                          ₹{paid.toLocaleString('en-IN')} / ₹{total.toLocaleString('en-IN')}
-                        </div>
+                  {list.length > 0 ? departmentKeys.map((dept) => (
+                    <div key={dept} className="bg-white border border-slate-100 rounded-2xl p-3">
+                      <div className="flex items-center justify-between px-2 pb-2 border-b border-slate-100">
+                        <div className="text-[11px] font-black uppercase tracking-widest text-slate-600">{grouped[dept].label}</div>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                          {grouped[dept].items.length}
+                        </span>
                       </div>
-                    );
-                  }) : (
+                      <div className="space-y-2 mt-3">
+                        {grouped[dept].items.map(({ student, fee }) => {
+                          const paid = fee?.paidAmount ?? 0;
+                          const total = fee?.totalAmount ?? 0;
+                          return (
+                            <div key={student.id} className="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3">
+                              <div className="font-black text-slate-800">{student.name}</div>
+                              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                {student.registrationNumber}
+                              </div>
+                              <div className="text-[11px] font-black text-slate-700 mt-2">
+                                ₹{paid.toLocaleString('en-IN')} / ₹{total.toLocaleString('en-IN')}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )) : (
                     <div className="py-6 text-center text-slate-400 font-bold text-sm">
                       No students
                     </div>
@@ -735,64 +838,80 @@ const FeesView: React.FC = () => {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredFees.length > 0 ? filteredFees.map(fee => {
-          const student = students.find(s => s.id === fee.studentId);
-          const pending = fee.totalAmount - fee.paidAmount;
-
-          return (
-            <div key={fee.id} className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-50 transition-all hover:shadow-xl group relative overflow-hidden animate-in fade-in slide-in-from-bottom-2">
-              <div className="absolute top-6 right-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => handleEdit(fee)} className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl hover:bg-indigo-100">
-                  <Edit2 size={18} />
-                </button>
-                <button onClick={() => handleDelete(fee.id)} className="p-3 bg-rose-50 text-rose-600 rounded-2xl hover:bg-rose-100">
-                  <Trash2 size={18} />
-                </button>
+      {filteredFees.length > 0 ? (
+        <div className="space-y-6">
+          {filteredFeesDepartmentKeys.map((dept) => (
+            <div key={dept} className="bg-white/70 border border-slate-100 rounded-[3rem] p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-4 px-2">
+                <h4 className="text-xs font-black uppercase tracking-widest text-slate-600">{filteredFeesByDepartment[dept].label}</h4>
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                  {filteredFeesByDepartment[dept].items.length} records
+                </span>
               </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredFeesByDepartment[dept].items.map(fee => {
+                  const student = students.find(s => s.id === fee.studentId);
+                  const pending = fee.totalAmount - fee.paidAmount;
 
-              <div className="flex items-center gap-4 mb-8">
-                <div className={`p-4 rounded-[1.5rem] ${fee.status === 'Paid' ? 'bg-emerald-100 text-emerald-600' : 'bg-orange-100 text-orange-600'}`}>
-                  {fee.status === 'Paid' ? <CheckCircle size={24} /> : <Clock size={24} />}
-                </div>
-                <div>
-                  <h4 className="font-black text-slate-800 text-lg leading-tight uppercase tracking-tight">{student?.name || 'N/A'}</h4>
-                  <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mt-1">Ref: {student?.registrationNumber || 'No ID'}</p>
-                </div>
-              </div>
+                  return (
+                    <div key={fee.id} className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-50 transition-all hover:shadow-xl group relative overflow-hidden animate-in fade-in slide-in-from-bottom-2">
+                      <div className="absolute top-6 right-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => handleEdit(fee)} className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl hover:bg-indigo-100">
+                          <Edit2 size={18} />
+                        </button>
+                        <button onClick={() => handleDelete(fee.id)} className="p-3 bg-rose-50 text-rose-600 rounded-2xl hover:bg-rose-100">
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
 
-              <div className="space-y-4">
-                <div className="flex justify-between items-end border-b border-slate-50 pb-4">
-                  <div>
-                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1">Total Fee</p>
-                    <p className="text-2xl font-black text-slate-800">₹{fee.totalAmount.toLocaleString('en-IN')}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1">Entry Date</p>
-                    <span className="bg-slate-50 px-3 py-1 rounded-full text-[10px] font-black text-indigo-500 uppercase">{fee.feeDate}</span>
-                  </div>
-                </div>
+                      <div className="flex items-center gap-4 mb-8">
+                        <div className={`p-4 rounded-[1.5rem] ${fee.status === 'Paid' ? 'bg-emerald-100 text-emerald-600' : 'bg-orange-100 text-orange-600'}`}>
+                          {fee.status === 'Paid' ? <CheckCircle size={24} /> : <Clock size={24} />}
+                        </div>
+                        <div>
+                          <h4 className="font-black text-slate-800 text-lg leading-tight uppercase tracking-tight">{student?.name || 'N/A'}</h4>
+                          <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest mt-1">
+                            Ref: {student?.registrationNumber || 'No ID'}
+                          </p>
+                        </div>
+                      </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-emerald-50/50 p-4 rounded-3xl">
-                    <p className="text-[9px] font-black text-emerald-600 uppercase mb-1">Paid</p>
-                    <p className="text-sm font-black text-emerald-700">₹{fee.paidAmount.toLocaleString('en-IN')}</p>
-                  </div>
-                  <div className="bg-rose-50/50 p-4 rounded-3xl">
-                    <p className="text-[9px] font-black text-rose-600 uppercase mb-1">Pending</p>
-                    <p className="text-sm font-black text-rose-700">₹{pending.toLocaleString('en-IN')}</p>
-                  </div>
-                </div>
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-end border-b border-slate-50 pb-4">
+                          <div>
+                            <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1">Total Fee</p>
+                            <p className="text-2xl font-black text-slate-800">₹{fee.totalAmount.toLocaleString('en-IN')}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest mb-1">Entry Date</p>
+                            <span className="bg-slate-50 px-3 py-1 rounded-full text-[10px] font-black text-indigo-500 uppercase">{fee.feeDate}</span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-emerald-50/50 p-4 rounded-3xl">
+                            <p className="text-[9px] font-black text-emerald-600 uppercase mb-1">Paid</p>
+                            <p className="text-sm font-black text-emerald-700">₹{fee.paidAmount.toLocaleString('en-IN')}</p>
+                          </div>
+                          <div className="bg-rose-50/50 p-4 rounded-3xl">
+                            <p className="text-[9px] font-black text-rose-600 uppercase mb-1">Pending</p>
+                            <p className="text-sm font-black text-rose-700">₹{pending.toLocaleString('en-IN')}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          );
-        }) : (
-          <div className="col-span-full py-24 text-center bg-white/50 border-4 border-dashed border-slate-200 rounded-[4rem]">
-            <FileText size={64} className="mx-auto text-slate-200 mb-4" />
-            <p className="text-slate-400 font-black text-xl italic uppercase tracking-widest">No records found for {selectedDate}</p>
-          </div>
-        )}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="py-24 text-center bg-white/50 border-4 border-dashed border-slate-200 rounded-[4rem]">
+          <FileText size={64} className="mx-auto text-slate-200 mb-4" />
+          <p className="text-slate-400 font-black text-xl italic uppercase tracking-widest">No records found for {selectedDate}</p>
+        </div>
+      )}
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xl z-[100] flex items-center justify-center p-4">
@@ -908,3 +1027,6 @@ const FeesView: React.FC = () => {
 };
 
 export default FeesView;
+
+
+
